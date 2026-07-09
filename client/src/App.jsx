@@ -14,6 +14,21 @@ export default function App() {
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
 
+  const [sidebarWidth, setSidebarWidth] = useState(() => Number(localStorage.getItem('ff.sidebarWidth')) || 320);
+  useEffect(() => localStorage.setItem('ff.sidebarWidth', String(sidebarWidth)), [sidebarWidth]);
+  const startResize = (e) => {
+    e.preventDefault();
+    const onMove = (ev) => setSidebarWidth(Math.min(700, Math.max(200, ev.clientX)));
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.userSelect = '';
+    };
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
+
   const [operator, setOperator] = useState(() => localStorage.getItem('ff.operator') || '');
   useEffect(() => localStorage.setItem('ff.operator', operator), [operator]);
   const canEdit = operator.trim().length > 0;
@@ -339,7 +354,7 @@ export default function App() {
   const selFixed = isFixed(selected);
 
   return (
-    <div className="app">
+    <div className="app" style={{ gridTemplateColumns: `${sidebarWidth}px 5px 1fr` }}>
       <Sidebar
         summary={summary}
         query={query} setQuery={setQuery}
@@ -351,6 +366,8 @@ export default function App() {
         onPatch={jceAvailable ? openPatch : null}
         multiSel={multiSel} onToggleMulti={toggleMulti}
       />
+
+      <div className="resizer" onMouseDown={startResize} title="Drag to resize the sidebar" />
 
       <main className="main">
         <div className="topbar">

@@ -31,7 +31,7 @@ function FileRow({ f, selected, onSelect, isFixed, viewers, checked, onToggle })
 function PatchedLabel({ p }) {
   if (!p) return null;
   const cls = p.status === 'patched' || p.status === 'already' ? 'ok' : 'bad';
-  return <span className={`patched-label ${cls}`} title={`JCE ${p.status}${p.jce ? ' ' + p.jce : ''}${p.at ? ' @ ' + p.at : ''}`}>&lt;patched&gt;</span>;
+  return <span className={`patched-label ${cls}`} title={`patched: JCE ${p.status}${p.jce ? ' ' + p.jce : ''}${p.at ? ' @ ' + p.at : ''}`}>&lt;P&gt;</span>;
 }
 
 export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilter, selected, onSelect, isFixed, reloadToken, viewersByPath = {}, patchedMap = {}, onPatch = null, multiSel = {}, onToggleMulti = null }) {

@@ -21,7 +21,9 @@ body {
 }
 button, input { font-family: inherit; }
 
-.app { display: grid; grid-template-columns: 320px 1fr; height: 100vh; }
+.app { display: grid; grid-template-columns: 320px 5px 1fr; height: 100vh; }
+.resizer { cursor: col-resize; background: var(--border); }
+.resizer:hover, .resizer:active { background: var(--accent); }
 
 /* ---------- sidebar ---------- */
 .sidebar {
