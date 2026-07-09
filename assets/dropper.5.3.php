@@ -610,10 +610,57 @@ function boot_joomla($docroot, $major) {
     }
 }
 
+// Run a callback with PHP warnings/notices/exceptions trapped (unpack usually
+// WARNS rather than throws). PHP 5.3-safe (closure with use-by-ref).
+function trap_php_errors($fn) {
+    $errs = array();
+    set_error_handler(function ($no, $str, $file, $line) use (&$errs) {
+        $errs[] = trim($str) . ' @ ' . basename((string) $file) . ':' . $line;
+        return true;    // handled — keep it out of the JSON output stream
+    });
+    $result = null;
+    try { $result = call_user_func($fn); }
+    catch (Exception $e) { $errs[] = 'exception: ' . $e->getMessage(); }
+    restore_error_handler();
+    return array('result' => $result, 'errors' => $errs);
+}
+
+// Why did unpack fail? Environment probe + trapped PHP errors, forwarded in JSON.
+function unpack_diag($zip, $phpErrors) {
+    $tmp = null;
+    if (class_exists('Joomla\\CMS\\Factory')) {
+        try { $c = \Joomla\CMS\Factory::getConfig(); if ($c) { $tmp = $c->get('tmp_path'); } } catch (Exception $e) {}
+    }
+    if (!$tmp && class_exists('JFactory')) {
+        try { $c = JFactory::getConfig(); if ($c) { $tmp = $c->get('tmp_path'); } } catch (Exception $e) {}
+    }
+    $probe = ($tmp && is_dir($tmp)) ? $tmp : dirname($zip);
+    return array(
+        'zip_exists'      => is_file($zip),
+        'zip_size'        => is_file($zip) ? filesize($zip) : null,
+        'zip_readable'    => is_readable($zip),
+        'ext_zip_loaded'  => extension_loaded('zip'),
+        'ziparchive'      => class_exists('ZipArchive'),
+        'tmp_path'        => $tmp,
+        'tmp_writable'    => ($tmp !== null) ? is_writable((string) $tmp) : null,
+        'disk_free_bytes' => @disk_free_space($probe),
+        'open_basedir'    => (string) ini_get('open_basedir'),
+        'php_errors'      => $phpErrors,
+    );
+}
+
 function install_pkg_j4($zip, &$out) {
-    $pkg = \Joomla\CMS\Installer\InstallerHelper::unpack($zip, true);
+    $u = trap_php_errors(function () use ($zip) {
+        return \Joomla\CMS\Installer\InstallerHelper::unpack($zip, true);
+    });
+    $pkg = $u['result'];
     $dir = isset($pkg['extractdir']) ? $pkg['extractdir'] : (isset($pkg['dir']) ? $pkg['dir'] : null);
-    if (!$dir || !is_dir($dir)) { $out['errors'][] = 'unpack failed'; return false; }
+    if (!$dir || !is_dir($dir)) {
+        $out['errors'][] = 'unpack failed';
+        $out['unpack_diag'] = unpack_diag($zip, $u['errors']);
+        collect_messages($out);     // forward any Joomla-enqueued reason too
+        return false;
+    }
     $ok = \Joomla\CMS\Installer\Installer::getInstance()->install($dir);
     collect_messages($out);
     \Joomla\CMS\Installer\InstallerHelper::cleanupInstall($zip, $dir);
@@ -623,9 +670,17 @@ function install_pkg_j4($zip, &$out) {
 function install_pkg_j3($zip, &$out) {
     \jimport('joomla.installer.installer');
     \jimport('joomla.installer.helper');
-    $pkg = \JInstallerHelper::unpack($zip, true);
+    $u = trap_php_errors(function () use ($zip) {
+        return \JInstallerHelper::unpack($zip, true);
+    });
+    $pkg = $u['result'];
     $dir = isset($pkg['dir']) ? $pkg['dir'] : (isset($pkg['extractdir']) ? $pkg['extractdir'] : null);
-    if (!$dir || !is_dir($dir)) { $out['errors'][] = 'unpack failed'; return false; }
+    if (!$dir || !is_dir($dir)) {
+        $out['errors'][] = 'unpack failed';
+        $out['unpack_diag'] = unpack_diag($zip, $u['errors']);
+        collect_messages($out);
+        return false;
+    }
     $ok = \JInstaller::getInstance()->install($dir);
     collect_messages($out);
     \JInstallerHelper::cleanupInstall($zip, $dir);

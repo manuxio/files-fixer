@@ -122,10 +122,20 @@ function hintForError(e) {
   return null;
 }
 // Guidance for errors the Joomla installer reports (inside install.errors).
-function hintForInstall(errors) {
+function hintForInstall(errors, diag) {
   const j = errors.join(' ').toLowerCase();
-  if (j.includes('unpack')) return 'Joomla could not EXTRACT the package on the target. Likely: PHP "zip" extension not enabled (php -m | grep zip), the Joomla Temp Folder (Global Config → Server → Path to Temp Folder) is wrong or not writable, disk/quota full, or open_basedir blocks tmp. The package itself is valid (verified here).';
-  if (j.includes('permission') || j.includes('writable') || j.includes('failed to move') || j.includes('copy')) return 'Filesystem permissions — the web user cannot write to the install/tmp/extension dirs. Fix ownership/permissions on the docroot + tmp.';
+  if (j.includes('unpack')) {
+    if (diag) {
+      if (diag.ext_zip_loaded === false) return 'PHP "zip" extension is NOT loaded on the target — Joomla cannot extract the package. Enable ext-zip (ZipArchive) and retry.';
+      if (diag.tmp_writable === false) return `Joomla Temp Folder "${diag.tmp_path || '?'}" is NOT writable by the web user — fix its permissions, or set a writable path (Global Config → Server → Path to Temp Folder).`;
+      if (diag.zip_exists === false) return 'The package .zip was not present on the target at install time (transfer/cleanup problem).';
+      if (typeof diag.disk_free_bytes === 'number' && diag.disk_free_bytes >= 0 && diag.disk_free_bytes < 25 * 1024 * 1024) return `Low disk space (~${Math.round(diag.disk_free_bytes / 1048576)} MB free) where Joomla extracts — free space and retry.`;
+      if (diag.open_basedir) return `open_basedir is set ("${diag.open_basedir}"); ensure the Joomla Temp Folder (${diag.tmp_path || '?'}) is inside it.`;
+      if (Array.isArray(diag.php_errors) && diag.php_errors.length) return 'unpack raised: ' + diag.php_errors.join(' | ');
+    }
+    return 'Joomla could not EXTRACT the package. Check: PHP zip ext (php -m | grep zip), Joomla Temp Folder writable, disk space, open_basedir. Package is valid (verified here).';
+  }
+  if (j.includes('permission') || j.includes('writable') || j.includes('failed to move') || j.includes('copy')) return 'Filesystem permissions — the web user cannot write to the install/tmp/extension dirs.';
   if (j.includes('xml') || j.includes('manifest')) return 'Manifest/format problem — the package may not match this Joomla major version.';
   return 'The Joomla installer reported errors — see the install phase in details.';
 }
@@ -266,7 +276,9 @@ async function patchWebsite({ website, baseUrl, basicUser, basicPass, ip, operat
     } else if (installErrors.length) {
       // The installer itself reported the problem (e.g. "unpack failed") — surface THAT.
       record.status = 'failed';
-      detail.hint = hintForInstall(installErrors);
+      const diag = insInfo.unpack_diag || null;
+      if (diag) { detail.unpack_diag = diag; logErr(`${website}: unpack_diag: ${JSON.stringify(diag)}`); }
+      detail.hint = hintForInstall(installErrors, diag);
       record.note = 'install failed: ' + installErrors.join('; ') + ' — ' + detail.hint;
     } else {
       record.status = 'failed';
