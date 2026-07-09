@@ -82,6 +82,8 @@ button, input { font-family: inherit; }
 .file.fixed .fname { text-decoration: line-through; color: var(--muted); }
 .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .tick { color: var(--added); }
+.viewer { font-size: 11px; filter: grayscale(1) opacity(0.85); }
+.viewer.editing { filter: none; }
 .empty { padding: 20px; color: var(--muted); }
 
 .badge {
@@ -113,6 +115,8 @@ button, input { font-family: inherit; }
 .filebar { background: var(--panel); }
 .path { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sha { margin-left: auto; color: var(--muted); font-family: ui-monospace, monospace; font-size: 12px; }
+.also { color: var(--modified); font-size: 12px; white-space: nowrap; }
+.presence { color: var(--muted); font-size: 12px; white-space: pre; cursor: default; }
 
 .modes { display: flex; gap: 4px; }
 .btn {

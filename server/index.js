@@ -5,9 +5,10 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const config = require('./config');
 const { getDiff, getSummary, queryFiles, applyFixed } = require('./diff');
-const { resolveSide } = require('./paths');
+const { resolveSide, websiteOf } = require('./paths');
 const audit = require('./audit');
 const fixedStore = require('./fixed');
+const events = require('./events');
 
 const app = express();
 app.use(express.json({ limit: '25mb' }));
@@ -22,6 +23,33 @@ function requireOperator(req) {
 }
 
 const fail = (res, code, e) => res.status((e && e.status) || code).json({ error: String((e && e.message) || e) });
+
+const originOf = (req) => (req.body && req.body.clientId) || null;
+
+// --- multi-user live updates (Server-Sent Events) ------------------------
+app.get('/api/events', (req, res) => {
+  const id = (req.query.clientId || '').toString() || ('c' + Math.random().toString(36).slice(2));
+  res.set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.flushHeaders();
+  res.write('retry: 3000\n\n');
+  events.addClient(id, res);
+  events.broadcastPresence();
+  const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch { /* closed */ } }, 25000);
+  req.on('close', () => { clearInterval(ping); events.removeClient(id); });
+});
+
+// Presence heartbeat: which file/mode this client is on.
+app.post('/api/presence', (req, res) => {
+  const { clientId, operator, path: p, mode } = req.body || {};
+  if (!clientId) return fail(res, 400, 'clientId required');
+  events.setPresence(clientId, { operator, path: p, mode });
+  res.json({ ok: true });
+});
 
 app.get('/api/health', (req, res) => res.json({ ok: true, config: {
   leftRoot: config.leftRoot, rightRoot: config.rightRoot, evidenceRoot: config.evidenceRoot,
@@ -84,6 +112,7 @@ app.post('/api/delete', async (req, res) => {
     catch { return fail(res, 404, 'right file not found'); }
     await fsp.rm(full);
     const record = await audit.record({ operation: 'delete', absPath: abs, rightPath: full, before, after: null, actor, note: req.body.note });
+    events.broadcast('mutated', { path: abs, website: websiteOf(abs), operation: 'delete', by: actor, at: record.timestamp, clientId: originOf(req) });
     res.json({ ok: true, record });
   } catch (e) { fail(res, 400, e); }
 });
@@ -104,6 +133,7 @@ app.post('/api/overwrite', async (req, res) => {
     await fsp.mkdir(path.dirname(rp), { recursive: true });
     await fsp.writeFile(rp, after);
     const record = await audit.record({ operation: 'overwrite', absPath: abs, rightPath: rp, before, after, actor, note: req.body.note, extra: { source_left_path: lp } });
+    events.broadcast('mutated', { path: abs, website: websiteOf(abs), operation: 'overwrite', by: actor, at: record.timestamp, clientId: originOf(req) });
     res.json({ ok: true, record });
   } catch (e) { fail(res, 400, e); }
 });
@@ -122,6 +152,7 @@ app.post('/api/save', async (req, res) => {
     await fsp.mkdir(path.dirname(rp), { recursive: true });
     await fsp.writeFile(rp, after);
     const record = await audit.record({ operation: 'edit', absPath: abs, rightPath: rp, before, after, actor, note: req.body.note });
+    events.broadcast('mutated', { path: abs, website: websiteOf(abs), operation: 'edit', by: actor, at: record.timestamp, clientId: originOf(req) });
     res.json({ ok: true, record });
   } catch (e) { fail(res, 400, e); }
 });
@@ -138,6 +169,7 @@ app.post('/api/fixed', async (req, res) => {
     const val = await fixedStore.set(abs, fixed, actor, at);
     applyFixed(abs, val);
     await audit.event({ operation: fixed ? 'mark-fixed' : 'unmark-fixed', absPath: abs, actor, note: req.body.note });
+    events.broadcast('fixed', { path: abs, website: websiteOf(abs), fixed, at: fixed ? at : null, by: fixed ? actor : null, clientId: originOf(req) });
     res.json({ ok: true, fixed, at: fixed ? at : null, by: fixed ? actor : null });
   } catch (e) { fail(res, 400, e); }
 });

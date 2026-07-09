@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api } from './api.js';
+import { api, clientId } from './api.js';
 import { Sidebar } from './Sidebar.jsx';
 import { CodeView, DiffView } from './Editors.jsx';
 
 const short = (h) => (h ? h.slice(0, 12) : '—');
+const base = (p) => (p ? p.split('/').pop() : '');
 const defaultMode = (f) => (f.status === 'added' ? 'right' : f.status === 'deleted' ? 'left' : 'diff');
 
 export default function App() {
@@ -27,9 +28,12 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [fixedOverride, setFixedOverride] = useState({}); // path -> bool (optimistic, over server state)
   const [history, setHistory] = useState(null);
+  const [viewers, setViewers] = useState([]); // live presence from other clients
 
   const draftRef = useRef('');
   const toastTimer = useRef(null);
+  const selectedRef = useRef(null);
+  const summaryTimer = useRef(null);
 
   const notify = useCallback((msg, kind = 'ok') => {
     setToast({ msg, kind });
@@ -49,6 +53,53 @@ export default function App() {
   }, []);
 
   useEffect(() => { loadSummary(false); }, [loadSummary]);
+
+  selectedRef.current = selected;
+
+  // Debounced counts refresh (coalesces bursts of remote events).
+  const scheduleSummaryRefresh = useCallback(() => {
+    clearTimeout(summaryTimer.current);
+    summaryTimer.current = setTimeout(() => { api.summary(false).then(setSummary).catch(() => {}); }, 300);
+  }, []);
+
+  // Subscribe to live updates from other operators (once).
+  useEffect(() => {
+    const es = new EventSource(api.eventsUrl());
+    es.addEventListener('presence', (e) => setViewers(JSON.parse(e.data).viewers || []));
+    es.addEventListener('fixed', (e) => {
+      const d = JSON.parse(e.data);
+      if (d.clientId === clientId) return; // ignore our own echo
+      setFixedOverride((o) => ({ ...o, [d.path]: d.fixed }));
+      scheduleSummaryRefresh();
+      notify(`${d.by || 'someone'} ${d.fixed ? 'marked fixed' : 'unmarked'}: ${base(d.path)}`);
+    });
+    es.addEventListener('mutated', (e) => {
+      const d = JSON.parse(e.data);
+      if (d.clientId === clientId) return;
+      const cur = selectedRef.current;
+      if (cur && cur.absolute_path === d.path) reloadSelected(cur);
+      scheduleSummaryRefresh();
+      notify(`${d.by || 'someone'}: ${d.operation} ${base(d.path)}`);
+    });
+    es.onerror = () => { /* EventSource reconnects automatically */ };
+    return () => es.close();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Broadcast our presence (what file/mode we're on) + heartbeat.
+  useEffect(() => {
+    const send = () => api.presence(operator, selected ? selected.absolute_path : null, selected ? mode : null).catch(() => {});
+    send();
+    const t = setInterval(send, 15000);
+    return () => clearInterval(t);
+  }, [operator, selected, mode]);
+
+  const others = useMemo(() => viewers.filter((v) => v.id !== clientId), [viewers]);
+  const viewersByPath = useMemo(() => {
+    const m = {};
+    for (const v of others) if (v.path) (m[v.path] = m[v.path] || []).push(v);
+    return m;
+  }, [others]);
 
   const isFixed = useCallback((file) => {
     if (!file) return false;
@@ -185,6 +236,7 @@ export default function App() {
         statusFilter={statusFilter} setStatusFilter={setStatusFilter}
         selected={selected} onSelect={selectFile}
         isFixed={isFixed} reloadToken={reloadToken}
+        viewersByPath={viewersByPath}
       />
 
       <main className="main">
@@ -200,6 +252,12 @@ export default function App() {
             ) : <span className="muted">loading…</span>}
           </div>
           <div className="spacer" />
+          <span
+            className="presence"
+            title={others.length ? others.map((v) => `${v.operator || 'anonymous'}${v.path ? ' · ' + base(v.path) : ''}`).join('\n') : 'just you'}
+          >
+            👤 {others.length + 1} online
+          </span>
           <label className={`operator ${canEdit ? '' : 'required'}`}>
             operator
             <input ref={operatorRef} value={operator} onChange={(e) => setOperator(e.target.value)} placeholder="name required" spellCheck={false} />
@@ -230,6 +288,11 @@ export default function App() {
               <span className="sha" title="left sha256 → right sha256">
                 {short(sha && sha.left)} → {short(sha && sha.right)}
               </span>
+              {viewersByPath[selected.absolute_path] && (
+                <span className="also" title="other operators on this file right now">
+                  ⚠ also here: {viewersByPath[selected.absolute_path].map((v) => `${v.operator || 'anon'}${v.mode === 'edit' ? ' (editing)' : ''}`).join(', ')}
+                </span>
+              )}
             </div>
 
             <div className="actions">

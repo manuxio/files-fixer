@@ -11,6 +11,7 @@ fix the **right** side — with every disruptive action backed up and logged to
 - per file: **diff · show left · show right · edit right in place · overwrite/restore right from left · delete right**
 - syntax highlighting for `.php`, `.html`/`.htm`, `.js`
 - every delete/overwrite/edit → `/evidence/audit.log` (JSONL) + a timestamped backup folder (`before`, `after`, `meta.json`)
+- **multi-user**: all connected browsers update live (Server-Sent Events). Others' fixes/deletes/overwrites/edits appear immediately, and a presence marker shows who is viewing/editing each file — so two operators don't remediate the same thing twice.
 
 ---
 

@@ -5,8 +5,13 @@ async function j(url, opts) {
   return data;
 }
 
+// Stable per-tab id so the server can attribute events and skip echoing them back.
+export const clientId = (window.crypto && crypto.randomUUID)
+  ? crypto.randomUUID()
+  : 'c' + Math.random().toString(36).slice(2);
+
 const post = (url, body) =>
-  j(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  j(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ clientId, ...body }) });
 
 export const api = {
   health: () => j('/api/health'),
@@ -25,5 +30,7 @@ export const api = {
   overwrite: (path, operator, note) => post('/api/overwrite', { path, operator, note }),
   save: (path, content, operator, note) => post('/api/save', { path, content, operator, note }),
   setFixed: (path, fixed, operator, note) => post('/api/fixed', { path, fixed, operator, note }),
+  presence: (operator, path, mode) => post('/api/presence', { operator, path, mode }),
+  eventsUrl: () => '/api/events?clientId=' + encodeURIComponent(clientId),
   audit: () => j('/api/audit'),
 };

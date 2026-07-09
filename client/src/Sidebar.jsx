@@ -4,9 +4,10 @@ import { api } from './api.js';
 const STATUS_LABEL = { added: 'A', modified: 'M', deleted: 'D' };
 const LIMIT = 200;
 
-function FileRow({ f, selected, onSelect, isFixed }) {
+function FileRow({ f, selected, onSelect, isFixed, viewers }) {
   const fx = isFixed(f);
   const isSel = selected && selected.absolute_path === f.absolute_path;
+  const editing = viewers && viewers.some((v) => v.mode === 'edit');
   return (
     <div
       className={`file ${f.status} ${isSel ? 'selected' : ''} ${fx ? 'fixed' : ''}`}
@@ -15,12 +16,15 @@ function FileRow({ f, selected, onSelect, isFixed }) {
     >
       <span className={`badge ${f.status}`}>{STATUS_LABEL[f.status]}</span>
       <span className="fname">{f.filename}</span>
+      {viewers && viewers.length > 0 && (
+        <span className={`viewer ${editing ? 'editing' : ''}`} title={'here now: ' + viewers.map((v) => `${v.operator || 'anon'}${v.mode === 'edit' ? ' (editing)' : ''}`).join(', ')}>👤</span>
+      )}
       {fx && <span className="tick">✔</span>}
     </div>
   );
 }
 
-export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilter, selected, onSelect, isFixed, reloadToken }) {
+export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilter, selected, onSelect, isFixed, reloadToken, viewersByPath = {} }) {
   const [expanded, setExpanded] = useState({});
   const [browse, setBrowse] = useState({});   // name -> { files, total, offset, loading }
   const [search, setSearch] = useState(null); // { files, total, offset, loading }
@@ -141,7 +145,7 @@ export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilte
               <div className="site" key={g.name}>
                 <div className="site-head static"><span className="site-name" title={g.name}>{g.name}</span></div>
                 <div className="files">
-                  {g.files.map((f) => <FileRow key={f.absolute_path} f={f} selected={selected} onSelect={onSelect} isFixed={isFixed} />)}
+                  {g.files.map((f) => <FileRow key={f.absolute_path} f={f} selected={selected} onSelect={onSelect} isFixed={isFixed} viewers={viewersByPath[f.absolute_path]} />)}
                 </div>
               </div>
             ))}
@@ -168,7 +172,7 @@ export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilte
               {isOpen && (
                 <div className="files">
                   {page && page.loading && page.files.length === 0 && <div className="loading small">loading…</div>}
-                  {page && page.files.map((f) => <FileRow key={f.absolute_path} f={f} selected={selected} onSelect={onSelect} isFixed={isFixed} />)}
+                  {page && page.files.map((f) => <FileRow key={f.absolute_path} f={f} selected={selected} onSelect={onSelect} isFixed={isFixed} viewers={viewersByPath[f.absolute_path]} />)}
                   {page && page.files.length < page.total && (
                     <button className="load-more" disabled={page.loading} onClick={() => loadMoreBrowse(w.name)}>
                       {page.loading ? 'loading…' : `Load more (${page.total - page.files.length} left)`}
