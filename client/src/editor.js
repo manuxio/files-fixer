@@ -4,7 +4,7 @@ import { php } from '@codemirror/lang-php';
 import { html } from '@codemirror/lang-html';
 import { javascript } from '@codemirror/lang-javascript';
 import { oneDark } from '@codemirror/theme-one-dark';
-import { MergeView } from '@codemirror/merge';
+import { MergeView, getChunks } from '@codemirror/merge';
 
 export function langForPath(p = '') {
   const ext = p.toLowerCase().split('.').pop();
@@ -14,4 +14,4 @@ export function langForPath(p = '') {
   return [];
 }
 
-export { EditorView, EditorState, basicSetup, oneDark, MergeView };
+export { EditorView, EditorState, basicSetup, oneDark, MergeView, getChunks };

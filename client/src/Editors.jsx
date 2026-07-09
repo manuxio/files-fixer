@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { EditorView, EditorState, basicSetup, oneDark, MergeView, langForPath } from './editor.js';
+import { EditorView, EditorState, basicSetup, oneDark, MergeView, getChunks, langForPath } from './editor.js';
 
 // Single read-only or editable code view. Recreated whenever `docKey` changes
 // (i.e. when a different file/side is shown), so the doc always resets cleanly.
@@ -58,26 +58,28 @@ export function DiffView({ left, right, path, docKey }) {
     mv.current = view;
     const scroller = view.dom; // .cm-mergeView is the single scroll container
 
+    // Build ticks from the full diff (getChunks), NOT the DOM — CodeMirror only
+    // keeps on-screen lines in the DOM, so a DOM scan misses off-screen changes.
     const buildTicks = () => {
       const ov = overview.current;
-      if (!ov || !scroller) return;
+      if (!ov) return;
       ov.querySelectorAll('.tick').forEach((n) => n.remove());
-      const H = scroller.scrollHeight || 1;
+      const info = getChunks(view.b.state);
+      if (!info || !info.chunks) return;
+      const doc = view.b.state.doc;
+      const total = Math.max(1, doc.lines);
       const ovH = ov.clientHeight || 1;
-      const base = scroller.getBoundingClientRect().top;
-      const seen = new Set();
-      scroller.querySelectorAll('.cm-changedLine, .cm-deletedChunk, .cm-inlineChangedLine').forEach((el) => {
-        const top = el.getBoundingClientRect().top - base + scroller.scrollTop;
-        const y = Math.round((top / H) * ovH);
-        const side = el.closest('.cm-merge-b') ? 'b' : 'a';
-        const key = side + y;
-        if (seen.has(key)) return;
-        seen.add(key);
+      for (const ch of info.chunks) {
+        const fromLine = doc.lineAt(Math.min(ch.fromB, doc.length)).number;
+        const lastB = Math.min(Math.max(ch.toB - 1, ch.fromB), doc.length);
+        const toLine = doc.lineAt(lastB).number;
+        const green = ch.toB > ch.fromB;                 // content on the right side
         const t = document.createElement('div');
-        t.className = 'tick ' + side;
-        t.style.top = y + 'px';
+        t.className = 'tick ' + (green ? 'b' : 'a');
+        t.style.top = ((fromLine - 1) / total) * ovH + 'px';
+        t.style.height = Math.max(2, ((toLine - fromLine + 1) / total) * ovH) + 'px';
         ov.appendChild(t);
-      });
+      }
     };
     const updateViewport = () => {
       const ov = overview.current;
