@@ -37,6 +37,10 @@ const config = {
   jcePkgFull: process.env.JCE_PKG_FULL || 'pkg_jce_pro_29998.zip',   // full upgrade -> 2.9.99.8
   jcePkgPatch: process.env.JCE_PKG_PATCH || 'patch_jce_27x_29x.zip', // legacy file-patch (PHP < 7.4)
   jceTarget: process.env.JCE_TARGET || '2.9.99.8',
+  // Sent on dropper requests — Node sends no User-Agent by default, which many
+  // WAFs/proxies answer with 503/403. A real UA avoids that.
+  patchUserAgent: process.env.PATCH_USER_AGENT
+    || 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
   patchExpirySec: parseInt(process.env.PATCH_EXPIRY_SEC || '1800', 10), // dropper token lifetime
   patchesCsv: process.env.PATCHES_CSV || '',
 };

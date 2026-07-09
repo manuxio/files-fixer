@@ -24,29 +24,64 @@ const cmpVer = (a, b) => {
 const phpLt = (a, b) => cmpVer(a, b) < 0;
 
 // One HTTP call to the dropper. POST form-encoded so the token is not left in
-// the target's access log. HTTPS certs are NOT verified (policy: messy fleet).
+// the target's access log. Sends a real User-Agent (Node sends none, which many
+// WAFs answer 503/403). HTTPS certs are NOT verified (policy: messy fleet).
+// Resolves with the full exchange (req+resp headers/body) for diagnostics.
 function httpJson(url, { headers = {}, body = null, timeoutMs = 60000 } = {}) {
   return new Promise((resolve, reject) => {
     const lib = url.protocol === 'https:' ? https : http;
-    const opts = { method: 'POST', headers: { ...headers }, timeout: timeoutMs };
+    const h = {
+      'User-Agent': config.patchUserAgent,
+      Accept: 'application/json, text/plain, */*',
+      ...headers,
+    };
+    const opts = { method: 'POST', headers: h, timeout: timeoutMs };
     if (url.protocol === 'https:') opts.rejectUnauthorized = false;
     if (body != null) {
       opts.headers['Content-Type'] = 'application/x-www-form-urlencoded';
       opts.headers['Content-Length'] = Buffer.byteLength(body);
     }
+    const shownUrl = url.origin + url.pathname;
     const req = lib.request(url, opts, (res) => {
       let data = ''; let size = 0; const CAP = 16 * 1024 * 1024;
       res.on('data', (c) => { size += c.length; if (size <= CAP) data += c; });
       res.on('end', () => {
         let json = null; try { json = JSON.parse(data); } catch { /* non-JSON */ }
-        resolve({ status: res.statusCode, json, bodySnippet: json ? null : data.slice(0, 500) });
+        resolve({
+          status: res.statusCode, statusMessage: res.statusMessage, json,
+          respBody: data, bodySnippet: json ? null : data.slice(0, 500),
+          respHeaders: res.headers, reqHeaders: req.getHeaders(),
+          reqBody: body, method: opts.method, url: shownUrl,
+        });
       });
     });
     req.on('timeout', () => req.destroy(new Error('request timed out after ' + timeoutMs + 'ms')));
-    req.on('error', reject);
+    req.on('error', (e) => { e.reqHeaders = req.getHeaders(); e.url = shownUrl; e.method = opts.method; e.reqBody = body; reject(e); });
     if (body != null) req.write(body);
     req.end();
   });
+}
+
+// Compact per-phase record for the detail JSON / dialog.
+function phaseDetail(x) {
+  return {
+    url: x.url, http_status: x.status, status_message: x.statusMessage,
+    json: x.json || undefined,
+    body: x.json ? undefined : String(x.respBody || '').slice(0, 4000),
+    req_headers: x.reqHeaders, resp_headers: x.respHeaders,
+  };
+}
+
+// Full request+response dump to the container log (token redacted).
+function dumpExchange(website, phase, x, token) {
+  const redact = (s) => (token ? String(s || '').split(token).join('***') : String(s || ''));
+  logErr(`${website}: ${phase} ── full exchange ──`);
+  logErr(`${website}: ${phase} > ${x.method} ${x.url}`);
+  logErr(`${website}: ${phase} > req headers: ${JSON.stringify(x.reqHeaders || {})}`);
+  logErr(`${website}: ${phase} > req body: ${redact(x.reqBody).slice(0, 1000)}`);
+  logErr(`${website}: ${phase} < HTTP ${x.status} ${x.statusMessage || ''}`);
+  logErr(`${website}: ${phase} < resp headers: ${JSON.stringify(x.respHeaders || {})}`);
+  logErr(`${website}: ${phase} < resp body: ${redact(x.respBody).slice(0, 4000)}`);
 }
 
 const log = (...a) => console.log('[patch]', ...a);
@@ -93,7 +128,7 @@ function call(baseUrl, dropperName, params, { basicUser, basicPass, timeout }) {
   const body = new URLSearchParams(params).toString();
   const headers = {};
   if (basicUser) headers.Authorization = 'Basic ' + Buffer.from(`${basicUser}:${basicPass || ''}`).toString('base64');
-  return httpJson(url, { headers, body, timeoutMs: timeout }).then((r) => ({ ...r, url: url.origin + url.pathname }));
+  return httpJson(url, { headers, body, timeoutMs: timeout });
 }
 
 async function patchWebsite({ website, baseUrl, basicUser, basicPass, operator }) {
@@ -147,8 +182,9 @@ async function patchWebsite({ website, baseUrl, basicUser, basicPass, operator }
     // 1. preflight
     log(`${website}: preflight POST ${detail.dropper_url}`);
     const pf = await call(baseUrl, dropperName, { token, mode: 'preflight', run_id: runId }, { ...auth, timeout: 60000 });
-    detail.phases.preflight = { url: pf.url, http_status: pf.status, json: pf.json || undefined, body: pf.json ? undefined : pf.bodySnippet };
+    detail.phases.preflight = phaseDetail(pf);
     log(`${website}: preflight <- HTTP ${pf.status} ${pf.json ? 'JSON' : 'NON-JSON'}`);
+    if (!pf.json || pf.json.error) dumpExchange(website, 'preflight', pf, token);
     const pj = expectJson(pf, 'preflight');
     const pfd = pj.preflight || {};
     record.php_version = String(pj.php_version || '');
@@ -178,8 +214,9 @@ async function patchWebsite({ website, baseUrl, basicUser, basicPass, operator }
     // 3. install
     log(`${website}: install POST pkg=${pkg} (up to 300s)`);
     const ins = await call(baseUrl, dropperName, { token, mode: 'install', pkg, run_id: runId }, { ...auth, timeout: 300000 });
-    detail.phases.install = { url: ins.url, http_status: ins.status, json: ins.json || undefined, body: ins.json ? undefined : ins.bodySnippet };
+    detail.phases.install = phaseDetail(ins);
     log(`${website}: install <- HTTP ${ins.status} ${ins.json ? 'JSON' : 'NON-JSON'}`);
+    if (!ins.json || ins.json.error) dumpExchange(website, 'install', ins, token);
     const ij = expectJson(ins, 'install');
     const insInfo = ij.install || {};
     if (Array.isArray(insInfo.messages) && insInfo.messages.length) log(`${website}: install messages: ${insInfo.messages.join(' | ')}`);
@@ -188,8 +225,9 @@ async function patchWebsite({ website, baseUrl, basicUser, basicPass, operator }
     // 4. verify
     log(`${website}: verify POST`);
     const vf = await call(baseUrl, dropperName, { token, mode: 'verify', run_id: runId }, { ...auth, timeout: 60000 });
-    detail.phases.verify = { url: vf.url, http_status: vf.status, json: vf.json || undefined, body: vf.json ? undefined : vf.bodySnippet };
+    detail.phases.verify = phaseDetail(vf);
     log(`${website}: verify <- HTTP ${vf.status} ${vf.json ? 'JSON' : 'NON-JSON'}`);
+    if (!vf.json) dumpExchange(website, 'verify', vf, token);
     const v = vf.json && vf.json.verify;
     record.jce_after = (v && v.jce_version) || insInfo.after || '';
     const upToDate = !!(v && v.up_to_date);
@@ -212,6 +250,7 @@ async function patchWebsite({ website, baseUrl, basicUser, basicPass, operator }
     if (detail.hint) record.note += ' — ' + detail.hint;
     detail.error = record.note;
     logErr(`${website}: FAILED — ${record.note}`);
+    if (e && e.reqHeaders) logErr(`${website}: errored request ${e.method || 'POST'} ${e.url || ''} req headers: ${JSON.stringify(e.reqHeaders)}`);
     if (e && e.stack && !e.hint) logErr(e.stack);
     return finish();
   } finally {
