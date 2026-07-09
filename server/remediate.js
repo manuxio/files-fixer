@@ -121,6 +121,14 @@ function hintForError(e) {
   if (/ECONNRESET/i.test(m)) return 'Connection reset — a proxy/WAF dropped the connection.';
   return null;
 }
+// Guidance for errors the Joomla installer reports (inside install.errors).
+function hintForInstall(errors) {
+  const j = errors.join(' ').toLowerCase();
+  if (j.includes('unpack')) return 'Joomla could not EXTRACT the package on the target. Likely: PHP "zip" extension not enabled (php -m | grep zip), the Joomla Temp Folder (Global Config → Server → Path to Temp Folder) is wrong or not writable, disk/quota full, or open_basedir blocks tmp. The package itself is valid (verified here).';
+  if (j.includes('permission') || j.includes('writable') || j.includes('failed to move') || j.includes('copy')) return 'Filesystem permissions — the web user cannot write to the install/tmp/extension dirs. Fix ownership/permissions on the docroot + tmp.';
+  if (j.includes('xml') || j.includes('manifest')) return 'Manifest/format problem — the package may not match this Joomla major version.';
+  return 'The Joomla installer reported errors — see the install phase in details.';
+}
 // Return the dropper's parsed JSON, or throw a diagnostic Error carrying `.hint`.
 function expectJson(resp, phase) {
   if (resp.json) {
@@ -191,7 +199,9 @@ async function patchWebsite({ website, baseUrl, basicUser, basicPass, ip, operat
     deployed.push(path.join(docroot, dropperName));
     await fsp.copyFile(fullSrc, path.join(docroot, fullName)); deployed.push(path.join(docroot, fullName));
     await fsp.copyFile(patchSrc, path.join(docroot, patchName)); deployed.push(path.join(docroot, patchName));
-    log(`${website}: deployed dropper + ${fullName} + ${patchName}`);
+    const fz = (await fsp.stat(path.join(docroot, fullName)).catch(() => ({ size: -1 }))).size;
+    const pz = (await fsp.stat(path.join(docroot, patchName)).catch(() => ({ size: -1 }))).size;
+    log(`${website}: deployed dropper + ${fullName}(${fz}B) + ${patchName}(${pz}B)`);
 
     const auth = { basicUser, basicPass, ip: connectIp };
 
@@ -235,8 +245,10 @@ async function patchWebsite({ website, baseUrl, basicUser, basicPass, ip, operat
     if (!ins.json || ins.json.error) dumpExchange(website, 'install', ins, token);
     const ij = expectJson(ins, 'install');
     const insInfo = ij.install || {};
+    const installErrors = Array.isArray(insInfo.errors) ? insInfo.errors : [];
+    log(`${website}: install before=${insInfo.before || '?'} after=${insInfo.after || '?'} installer_returned=${insInfo.installer_returned}`);
     if (Array.isArray(insInfo.messages) && insInfo.messages.length) log(`${website}: install messages: ${insInfo.messages.join(' | ')}`);
-    if (Array.isArray(insInfo.errors) && insInfo.errors.length) logErr(`${website}: install errors: ${insInfo.errors.join(' | ')}`);
+    if (installErrors.length) logErr(`${website}: install errors: ${installErrors.join(' | ')}`);
 
     // 4. verify
     log(`${website}: verify POST`);
@@ -251,11 +263,15 @@ async function patchWebsite({ website, baseUrl, basicUser, basicPass, ip, operat
     if (upToDate || (!useFull && vulnClosed)) {
       record.status = 'patched';
       record.note = useFull ? ('upgraded to ' + (record.jce_after || config.jceTarget)) : 'legacy security-patch applied (vuln closed)';
+    } else if (installErrors.length) {
+      // The installer itself reported the problem (e.g. "unpack failed") — surface THAT.
+      record.status = 'failed';
+      detail.hint = hintForInstall(installErrors);
+      record.note = 'install failed: ' + installErrors.join('; ') + ' — ' + detail.hint;
     } else {
       record.status = 'failed';
-      record.note = 'verify did not confirm remediation (jce_after=' + (record.jce_after || '?') + ')';
-      detail.hint = 'Install ran but the site is still not up-to-date. Check the install messages/errors above and the install phase in details.';
-      if (detail.hint) record.note += ' — ' + detail.hint;
+      detail.hint = 'Install ran with no errors but verify still shows the site not up-to-date (jce_after=' + (record.jce_after || '?') + '). Check the install phase in details; the package may not match this Joomla major version.';
+      record.note = 'verify did not confirm remediation — ' + detail.hint;
     }
     log(`${website}: DONE status=${record.status} jce ${record.jce_before || '?'} -> ${record.jce_after || '?'}`);
     return finish();
