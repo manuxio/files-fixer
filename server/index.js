@@ -225,9 +225,9 @@ app.post('/api/patch-jce', async (req, res) => {
     const baseUrl = req.body && req.body.baseUrl;
     if (!website) return fail(res, 400, 'website required');
     if (!baseUrl) return fail(res, 400, 'baseUrl required');
-    console.log(`[api] patch-jce request: website=${website} baseUrl=${baseUrl} operator=${actor} basicAuth=${req.body.basicUser ? 'yes' : 'no'}`);
+    console.log(`[api] patch-jce request: website=${website} baseUrl=${baseUrl} ip=${req.body.ip || '(DNS)'} operator=${actor} basicAuth=${req.body.basicUser ? 'yes' : 'no'}`);
     const { record, detail } = await remediate.patchWebsite({
-      website, baseUrl,
+      website, baseUrl, ip: req.body.ip,
       basicUser: req.body.basicUser, basicPass: req.body.basicPass,
       operator: actor,
     });

@@ -27,22 +27,36 @@ const phpLt = (a, b) => cmpVer(a, b) < 0;
 // the target's access log. Sends a real User-Agent (Node sends none, which many
 // WAFs answer 503/403). HTTPS certs are NOT verified (policy: messy fleet).
 // Resolves with the full exchange (req+resp headers/body) for diagnostics.
-function httpJson(url, { headers = {}, body = null, timeoutMs = 60000 } = {}) {
+function httpJson(url, { headers = {}, body = null, timeoutMs = 60000, ip = null } = {}) {
   return new Promise((resolve, reject) => {
-    const lib = url.protocol === 'https:' ? https : http;
+    const isHttps = url.protocol === 'https:';
+    const lib = isHttps ? https : http;
+    const port = url.port ? Number(url.port) : (isHttps ? 443 : 80); // inferred from scheme
     const h = {
       'User-Agent': config.patchUserAgent,
       Accept: 'application/json, text/plain, */*',
       ...headers,
     };
-    const opts = { method: 'POST', headers: h, timeout: timeoutMs };
-    if (url.protocol === 'https:') opts.rejectUnauthorized = false;
     if (body != null) {
-      opts.headers['Content-Type'] = 'application/x-www-form-urlencoded';
-      opts.headers['Content-Length'] = Buffer.byteLength(body);
+      h['Content-Type'] = 'application/x-www-form-urlencoded';
+      h['Content-Length'] = Buffer.byteLength(body);
+    }
+    const opts = {
+      method: 'POST',
+      protocol: url.protocol,
+      hostname: ip || url.hostname,     // TCP target: dial the override IP if given
+      port,
+      path: url.pathname + url.search,
+      headers: h,
+      timeout: timeoutMs,
+    };
+    if (ip) opts.headers.Host = url.host;          // keep the vhost (name:port) when dialing an IP
+    if (isHttps) {
+      opts.rejectUnauthorized = false;
+      if (ip) opts.servername = url.hostname;      // TLS SNI = the real hostname
     }
     const shownUrl = url.origin + url.pathname;
-    const req = lib.request(url, opts, (res) => {
+    const req = lib.request(opts, (res) => {
       let data = ''; let size = 0; const CAP = 16 * 1024 * 1024;
       res.on('data', (c) => { size += c.length; if (size <= CAP) data += c; });
       res.on('end', () => {
@@ -122,16 +136,16 @@ function expectJson(resp, phase) {
   throw e;
 }
 
-function call(baseUrl, dropperName, params, { basicUser, basicPass, timeout }) {
+function call(baseUrl, dropperName, params, { basicUser, basicPass, timeout, ip }) {
   const base = baseUrl.endsWith('/') ? baseUrl : baseUrl + '/';
   const url = new URL(dropperName, base);
   const body = new URLSearchParams(params).toString();
   const headers = {};
   if (basicUser) headers.Authorization = 'Basic ' + Buffer.from(`${basicUser}:${basicPass || ''}`).toString('base64');
-  return httpJson(url, { headers, body, timeoutMs: timeout });
+  return httpJson(url, { headers, body, timeoutMs: timeout, ip });
 }
 
-async function patchWebsite({ website, baseUrl, basicUser, basicPass, operator }) {
+async function patchWebsite({ website, baseUrl, basicUser, basicPass, ip, operator }) {
   const dropperSrc = path.join(config.jceAssetsRoot, config.jceDropper);
   const fullSrc = path.join(config.jceAssetsRoot, config.jcePkgFull);
   const patchSrc = path.join(config.jceAssetsRoot, config.jcePkgPatch);
@@ -140,6 +154,8 @@ async function patchWebsite({ website, baseUrl, basicUser, basicPass, operator }
   }
   if (!baseUrl) { const e = new Error('base URL required'); e.status = 400; throw e; }
   if (/[\\/]/.test(website) || website.includes('..')) { const e = new Error('invalid website'); e.status = 400; throw e; }
+  const connectIp = (ip || '').trim() || null; // dial this IP but keep the URL host
+  if (connectIp && (/\s/.test(connectIp) || connectIp.includes('/'))) { const e = new Error('invalid IP/host override'); e.status = 400; throw e; }
 
   const rightRoot = path.resolve(config.rightRoot);
   const docroot = path.resolve(rightRoot, website);
@@ -158,7 +174,7 @@ async function patchWebsite({ website, baseUrl, basicUser, basicPass, operator }
   const templated = tpl.split('__SCANNER_TOKEN__').join(token).split('__SCANNER_EXPIRES__').join(String(expires));
 
   const deployed = [];
-  const detail = { website, base_url: baseUrl, dropper: dropperName, run_id: runId, target: config.jceTarget, phases: {} };
+  const detail = { website, base_url: baseUrl, connect_ip: connectIp, dropper: dropperName, run_id: runId, target: config.jceTarget, phases: {} };
   const record = {
     timestamp: new Date().toISOString(), website, operator: operator || '', base_url: baseUrl,
     php_version: '', joomla_version: '', jce_before: '', jce_after: '', package: '', status: 'failed', note: '',
@@ -168,7 +184,7 @@ async function patchWebsite({ website, baseUrl, basicUser, basicPass, operator }
   const baseSlash = baseUrl.endsWith('/') ? baseUrl : baseUrl + '/';
   const su = new URL(dropperName, baseSlash);
   detail.dropper_url = su.origin + su.pathname;
-  log(`${website}: START base=${baseUrl} docroot=${docroot} operator=${operator || '(none)'} url=${detail.dropper_url}`);
+  log(`${website}: START base=${baseUrl} connect=${connectIp || '(DNS)'} docroot=${docroot} operator=${operator || '(none)'} url=${detail.dropper_url}`);
 
   try {
     await fsp.writeFile(path.join(docroot, dropperName), templated);
@@ -177,7 +193,7 @@ async function patchWebsite({ website, baseUrl, basicUser, basicPass, operator }
     await fsp.copyFile(patchSrc, path.join(docroot, patchName)); deployed.push(path.join(docroot, patchName));
     log(`${website}: deployed dropper + ${fullName} + ${patchName}`);
 
-    const auth = { basicUser, basicPass };
+    const auth = { basicUser, basicPass, ip: connectIp };
 
     // 1. preflight
     log(`${website}: preflight POST ${detail.dropper_url}`);

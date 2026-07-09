@@ -39,7 +39,7 @@ export default function App() {
   const [jceAvailable, setJceAvailable] = useState(false);
   const [patchedMap, setPatchedMap] = useState({});   // website -> { status, at, jce }
   const [patchTarget, setPatchTarget] = useState(null); // website name -> opens the dialog
-  const [patchForm, setPatchForm] = useState({ baseUrl: '', basicUser: '', basicPass: '' });
+  const [patchForm, setPatchForm] = useState({ baseUrl: '', ip: '', basicUser: '', basicPass: '' });
   const [patchBusy, setPatchBusy] = useState(false);
   const [patchResult, setPatchResult] = useState(null);
 
@@ -304,7 +304,7 @@ export default function App() {
   const openPatch = (website) => {
     if (!ensureOperator()) return;
     setPatchTarget(website);
-    setPatchForm({ baseUrl: '', basicUser: '', basicPass: '' });
+    setPatchForm({ baseUrl: '', ip: '', basicUser: '', basicPass: '' });
     setPatchResult(null);
   };
 
@@ -315,6 +315,7 @@ export default function App() {
     try {
       const r = await api.patchJce({
         website: patchTarget, baseUrl: patchForm.baseUrl.trim(),
+        ip: patchForm.ip.trim() || undefined,
         basicUser: patchForm.basicUser || undefined, basicPass: patchForm.basicPass || undefined,
         operator,
       });
@@ -511,9 +512,15 @@ function PatchModal({ website, form, setForm, busy, result, onRun, onClose }) {
             Temporarily drops the remediation tool + packages into this site's docroot on the right,
             drives it over HTTP (preflight → install → verify), then removes them. TLS is not verified.
           </p>
-          <label className="field">Base URL (site docroot)
-            <input autoFocus placeholder="https://example.com" value={form.baseUrl} onChange={set('baseUrl')} spellCheck={false} disabled={busy} />
-          </label>
+          <div className="field-row">
+            <label className="field">Base URL (site docroot)
+              <input autoFocus placeholder="https://example.com" value={form.baseUrl} onChange={set('baseUrl')} spellCheck={false} disabled={busy} />
+            </label>
+            <label className="field" style={{ flex: '0 0 40%' }}>Host IP (optional)
+              <input placeholder="e.g. 203.0.113.5" value={form.ip} onChange={set('ip')} spellCheck={false} disabled={busy} autoComplete="off" />
+            </label>
+          </div>
+          <div className="muted small">If set, the connection dials this IP while keeping the URL's hostname for <code>Host</code>/SNI (bypass DNS/CDN/WAF — hit the origin). Port comes from the scheme.</div>
           <div className="field-row">
             <label className="field">Basic auth user (optional)
               <input value={form.basicUser} onChange={set('basicUser')} spellCheck={false} disabled={busy} autoComplete="off" />
@@ -531,7 +538,7 @@ function PatchModal({ website, form, setForm, busy, result, onRun, onClose }) {
                 {result.php_version ? ` · PHP ${result.php_version}` : ''}
               </div>
               {result.note ? <div className="note">{result.note}</div> : null}
-              {result.detail && result.detail.dropper_url ? <div className="mono muted">tried: {result.detail.dropper_url}</div> : null}
+              {result.detail && result.detail.dropper_url ? <div className="mono muted">tried: {result.detail.dropper_url}{result.detail.connect_ip ? ` (via ${result.detail.connect_ip})` : ''}</div> : null}
               {result.detail && result.detail.phases ? (
                 <div className="phases">
                   {['preflight', 'install', 'verify'].map((k) => (result.detail.phases[k]
