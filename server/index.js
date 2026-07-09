@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const config = require('./config');
-const { getDiff, getSummary, queryFiles, applyFixed } = require('./diff');
+const { getDiff, getSummary, queryFiles, applyFixed, sameSha } = require('./diff');
 const { resolveSide, websiteOf } = require('./paths');
 const audit = require('./audit');
 const fixedStore = require('./fixed');
@@ -76,6 +76,16 @@ app.get('/api/summary', async (req, res) => {
       : w));
     s.totals.patched = Object.values(pmap).filter((p) => p.status === 'patched').length;
     res.json(s);
+  } catch (e) { fail(res, 500, e); }
+});
+
+// Other changed files byte-identical to the given one (same content sha256).
+app.get('/api/same-sha', async (req, res) => {
+  try {
+    await getDiff();
+    const abs = req.query.path;
+    if (!abs) return fail(res, 400, 'path required');
+    res.json(sameSha(abs));
   } catch (e) { fail(res, 500, e); }
 });
 

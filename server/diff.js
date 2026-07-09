@@ -191,4 +191,19 @@ async function queryFiles({ website, status, q, offset = 0, limit = 200 } = {}) 
   return { total, offset: off, limit: lim, files: files.slice(off, off + lim) };
 }
 
-module.exports = { getDiff, getSummary, queryFiles, applyFixed };
+// Content checksum of a changed file: the right (live) sha when present,
+// otherwise the left (baseline) sha for deleted files.
+const contentSha = (f) => (f.right && f.right.sha256) || (f.left && f.left.sha256) || '';
+
+// Other changed files (any website) byte-identical to the given one.
+function sameSha(absPath) {
+  const target = allFiles.find((f) => f.absolute_path === absPath);
+  const sha = target ? contentSha(target) : '';
+  if (!sha) return { sha: '', files: [] };
+  const files = allFiles
+    .filter((f) => f.absolute_path !== absPath && contentSha(f) === sha)
+    .map((f) => ({ absolute_path: f.absolute_path, filename: f.filename, website: f.website, status: f.status, fixed: !!f.fixed }));
+  return { sha, files };
+}
+
+module.exports = { getDiff, getSummary, queryFiles, applyFixed, sameSha };

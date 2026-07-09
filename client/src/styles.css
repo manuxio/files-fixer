@@ -234,6 +234,9 @@ button, input { font-family: inherit; }
 .phase-chip { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); }
 .phase-chip.ok { border-color: var(--added); color: var(--added); }
 .phase-chip.bad { border-color: var(--deleted); color: var(--deleted); }
+.sha-list { max-height: 300px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+.sha-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+.sha-row .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .logrow {
   display: grid; grid-template-columns: 90px 190px 100px 1fr 150px; gap: 10px; align-items: center;
   padding: 6px 16px; border-bottom: 1px solid var(--border); font-size: 12px;
