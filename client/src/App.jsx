@@ -266,6 +266,7 @@ export default function App() {
       notify('Deleted (backed up to /evidence)');
       await reloadSelected(selected);
       setMode('left');
+      await proposeSameSha(selected.absolute_path, 'delete');
     } catch (e) { notify(String(e.message || e), 'err'); }
     finally { setBusy(false); }
   };
@@ -287,38 +288,57 @@ export default function App() {
 
   const doSave = async () => {
     if (!selected || !ensureOperator()) return;
+    const savedContent = draftRef.current;
     setBusy(true);
     try {
-      await api.save(selected.absolute_path, draftRef.current, operator, '');
+      await api.save(selected.absolute_path, savedContent, operator, '');
       await toggleFixed(selected, true);
       notify('Saved (backed up to /evidence)');
       await reloadSelected(selected);
       setMode('right');
+      await proposeSameSha(selected.absolute_path, 'edit', { content: savedContent });
     } catch (e) { notify(String(e.message || e), 'err'); }
     finally { setBusy(false); }
+  };
+
+  // After an action on one file, offer to apply it to byte-identical copies
+  // (same content sha) elsewhere. `sameSha` reads the CSV snapshot, so it still
+  // finds the originals even though we just changed this one on disk.
+  const proposeSameSha = async (path, action, extra) => {
+    try {
+      const r = await api.sameSha(path);
+      let matches = r.files || [];
+      if (action === 'fixed') matches = matches.filter((f) => !isFixed(f));
+      else matches = matches.filter((f) => f.status !== 'deleted'); // has a right file to delete/edit
+      if (matches.length) setShaPropose({ sha: r.sha, files: matches, action, ...(extra || {}) });
+    } catch { /* ignore */ }
   };
 
   const onToggleFixedClick = async () => {
     if (!ensureOperator()) return;
     const turningOn = !isFixed(selected);
     await toggleFixed(selected, turningOn);
-    if (turningOn) {
-      // Propose marking byte-identical copies (same sha) fixed too.
-      try {
-        const r = await api.sameSha(selected.absolute_path);
-        const matches = (r.files || []).filter((f) => !isFixed(f));
-        if (matches.length) setShaPropose({ sha: r.sha, files: matches });
-      } catch { /* ignore */ }
-    }
+    if (turningOn) await proposeSameSha(selected.absolute_path, 'fixed');
   };
 
-  const markAllSameSha = async () => {
-    const files = (shaPropose && shaPropose.files) || [];
+  const doProposedAction = async () => {
+    const p = shaPropose;
     setShaPropose(null);
+    if (!p) return;
+    setBusy(true);
     try {
-      await Promise.all(files.map((f) => toggleFixed(f, true)));
-      notify(`Marked ${files.length} identical file(s) fixed`);
+      if (p.action === 'fixed') {
+        await Promise.all(p.files.map((f) => toggleFixed(f, true)));
+        notify(`Marked ${p.files.length} identical file(s) fixed`);
+      } else if (p.action === 'delete') {
+        await Promise.all(p.files.map(async (f) => { await api.del(f.absolute_path, operator, 'same-sha bulk'); await toggleFixed(f, true); }));
+        notify(`Deleted ${p.files.length} identical file(s) (backed up to /evidence)`);
+      } else if (p.action === 'edit') {
+        await Promise.all(p.files.map(async (f) => { await api.save(f.absolute_path, p.content, operator, 'same-sha bulk'); await toggleFixed(f, true); }));
+        notify(`Applied the edit to ${p.files.length} identical file(s) (backed up to /evidence)`);
+      }
     } catch (e) { notify(String(e.message || e), 'err'); }
+    finally { setBusy(false); }
   };
 
   // --- bulk multi-select (same website): mark fixed / delete only ---
@@ -573,7 +593,7 @@ export default function App() {
       </main>
 
       {shaPropose && (
-        <SameShaModal sha={shaPropose.sha} files={shaPropose.files} onMarkAll={markAllSameSha} onClose={() => setShaPropose(null)} />
+        <SameShaModal sha={shaPropose.sha} files={shaPropose.files} action={shaPropose.action} onConfirm={doProposedAction} onClose={() => setShaPropose(null)} />
       )}
       {history && <HistoryModal records={history} onClose={() => setHistory(null)} />}
       {patchTarget && (
@@ -690,12 +710,18 @@ function JceBody({ jce, current, currentSide, path, version, docKey }) {
   );
 }
 
-function SameShaModal({ sha, files, onMarkAll, onClose }) {
+function SameShaModal({ sha, files, action, onConfirm, onClose }) {
+  const n = files.length;
+  const cfg = ({
+    fixed: { title: `${n} other file${n === 1 ? '' : 's'} with the same checksum`, sub: `Byte-identical to the file you just marked fixed.`, btn: `Mark all ${n} fixed`, cls: 'fixed-toggle on' },
+    delete: { title: `${n} identical file${n === 1 ? '' : 's'} elsewhere`, sub: `The same file (same sha256) exists on other sites — delete them too? Each is backed up to /evidence.`, btn: `Delete all ${n}`, cls: 'danger' },
+    edit: { title: `${n} identical file${n === 1 ? '' : 's'} elsewhere`, sub: `Apply the same edit (overwrite with your new content) to these identical files? Each is backed up to /evidence.`, btn: `Apply to all ${n}`, cls: 'primary' },
+  })[action] || {};
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal small" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <h3>{files.length} other file{files.length === 1 ? '' : 's'} with the same checksum</h3>
+          <h3>{cfg.title}</h3>
           <button className="btn ghost" onClick={onClose}>Close</button>
         </div>
         <div className="modal-body pad">
@@ -708,11 +734,11 @@ function SameShaModal({ sha, files, onMarkAll, onClose }) {
               </div>
             ))}
           </div>
-          <div className="muted small">These are byte-identical to the file you just marked fixed.</div>
+          <div className="muted small">{cfg.sub}</div>
         </div>
         <div className="modal-foot">
           <button className="btn ghost" onClick={onClose}>Not now</button>
-          <button className="btn fixed-toggle on" onClick={onMarkAll}>Mark all {files.length} fixed</button>
+          <button className={`btn ${cfg.cls}`} onClick={onConfirm}>{cfg.btn}</button>
         </div>
       </div>
     </div>
