@@ -10,7 +10,16 @@ const post = (url, body) =>
 
 export const api = {
   health: () => j('/api/health'),
-  diff: (refresh) => j('/api/diff' + (refresh ? '?refresh=1' : '')),
+  summary: (refresh) => j('/api/summary' + (refresh ? '?refresh=1' : '')),
+  files: ({ website, status, q, offset = 0, limit = 200 } = {}) => {
+    const p = new URLSearchParams();
+    if (website) p.set('website', website);
+    if (status && status !== 'all') p.set('status', status);
+    if (q) p.set('q', q);
+    p.set('offset', offset);
+    p.set('limit', limit);
+    return j('/api/files?' + p.toString());
+  },
   file: (side, path) => j(`/api/file?side=${side}&path=${encodeURIComponent(path)}`),
   del: (path, operator, note) => post('/api/delete', { path, operator, note }),
   overwrite: (path, operator, note) => post('/api/overwrite', { path, operator, note }),

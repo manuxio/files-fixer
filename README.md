@@ -101,8 +101,11 @@ Every delete/overwrite/edit writes to `/evidence`:
 - `backups/<ts>__<op>__<path>/` — `before.<ext>`, `after.<ext>` (none for delete),
   and `meta.json`.
 
-Set an **operator** name in the top bar so actions are attributed. The in-app
-**History** button renders the audit trail.
+**An operator name is required** before any change-operation (delete / overwrite /
+edit / mark-fixed): the server rejects unattributed changes (HTTP 400, before
+touching any file) and the UI disables those actions until a name is set. The
+name is stamped into every log line and backup. The in-app **History** button
+renders the audit trail.
 
 Reset the demo after testing:
 
@@ -137,4 +140,8 @@ node scripts/gen-csv.js /path/to/root /mnt/data > left.csv
 - The diff is computed from the **CSVs** (the forensic snapshot); file views/edits
   read the **live** files. After remediation, findings stay listed and marked ✔
   handled — hit **Refresh CSVs** only if you regenerate the manifests.
-- Large CSVs are **streamed** — the whole file is never held in memory.
+- Large CSVs are **streamed** on the server — the whole file is never held in memory.
+- The UI never transfers the whole dataset. It loads `GET /api/summary` (websites +
+  counts only), then `GET /api/files?website=&status=&q=&offset=&limit=` on demand as
+  you expand a group or search — so a huge manifest stays on the server and the browser
+  only ever holds a page at a time.

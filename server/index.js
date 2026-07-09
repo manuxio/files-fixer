@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const config = require('./config');
-const { getDiff, applyFixed } = require('./diff');
+const { getDiff, getSummary, queryFiles, applyFixed } = require('./diff');
 const { resolveSide } = require('./paths');
 const audit = require('./audit');
 const fixedStore = require('./fixed');
@@ -14,17 +14,42 @@ app.use(express.json({ limit: '25mb' }));
 
 const MAX_READ = 8 * 1024 * 1024; // cap single-file view at 8MB
 
-const operatorOf = (req) =>
-  (req.get('x-operator') || (req.body && req.body.operator) || 'operator').toString().slice(0, 120);
+// Every change-operation must be attributed. Reject when no operator name is set.
+function requireOperator(req) {
+  const name = (req.get('x-operator') || (req.body && req.body.operator) || '').toString().trim();
+  if (!name) { const e = new Error('operator name required before making changes'); e.status = 400; throw e; }
+  return name.slice(0, 120);
+}
 
-const fail = (res, code, e) => res.status(code).json({ error: String((e && e.message) || e) });
+const fail = (res, code, e) => res.status((e && e.status) || code).json({ error: String((e && e.message) || e) });
 
 app.get('/api/health', (req, res) => res.json({ ok: true, config: {
   leftRoot: config.leftRoot, rightRoot: config.rightRoot, evidenceRoot: config.evidenceRoot,
   leftCsv: config.leftCsv, rightCsv: config.rightCsv, prefix: config.csvPrefix,
 } }));
 
-// Full diff, grouped by website. ?refresh=1 re-reads the CSVs.
+// Lightweight sidebar payload: websites + counts only (no file lists).
+app.get('/api/summary', async (req, res) => {
+  try { res.json(await getSummary(req.query.refresh === '1')); }
+  catch (e) { fail(res, 500, e); }
+});
+
+// Paged files. Scope with ?website=, search across all with ?q=, filter with
+// ?status=, page with ?offset=&limit=. Keeps large datasets off the wire.
+app.get('/api/files', async (req, res) => {
+  try {
+    res.json(await queryFiles({
+      website: req.query.website || undefined,
+      status: req.query.status || 'all',
+      q: (req.query.q || '').toString(),
+      offset: Number(req.query.offset) || 0,
+      limit: Number(req.query.limit) || 200,
+    }));
+  } catch (e) { fail(res, 500, e); }
+});
+
+// Full diff (everything at once) — kept for debugging/export. The UI uses
+// /api/summary + /api/files instead so it never transfers the whole set.
 app.get('/api/diff', async (req, res) => {
   try { res.json(await getDiff(req.query.refresh === '1')); }
   catch (e) { fail(res, 500, e); }
@@ -52,12 +77,13 @@ app.post('/api/delete', async (req, res) => {
   try {
     const abs = req.body.path;
     if (!abs) return fail(res, 400, 'path required');
+    const actor = requireOperator(req);
     const full = resolveSide('right', abs);
     let before;
     try { before = await fsp.readFile(full); }
     catch { return fail(res, 404, 'right file not found'); }
     await fsp.rm(full);
-    const record = await audit.record({ operation: 'delete', absPath: abs, rightPath: full, before, after: null, actor: operatorOf(req), note: req.body.note });
+    const record = await audit.record({ operation: 'delete', absPath: abs, rightPath: full, before, after: null, actor, note: req.body.note });
     res.json({ ok: true, record });
   } catch (e) { fail(res, 400, e); }
 });
@@ -67,6 +93,7 @@ app.post('/api/overwrite', async (req, res) => {
   try {
     const abs = req.body.path;
     if (!abs) return fail(res, 400, 'path required');
+    const actor = requireOperator(req);
     const lp = resolveSide('left', abs);
     const rp = resolveSide('right', abs);
     let after;
@@ -76,7 +103,7 @@ app.post('/api/overwrite', async (req, res) => {
     try { before = await fsp.readFile(rp); } catch { /* right may not exist (restore) */ }
     await fsp.mkdir(path.dirname(rp), { recursive: true });
     await fsp.writeFile(rp, after);
-    const record = await audit.record({ operation: 'overwrite', absPath: abs, rightPath: rp, before, after, actor: operatorOf(req), note: req.body.note, extra: { source_left_path: lp } });
+    const record = await audit.record({ operation: 'overwrite', absPath: abs, rightPath: rp, before, after, actor, note: req.body.note, extra: { source_left_path: lp } });
     res.json({ ok: true, record });
   } catch (e) { fail(res, 400, e); }
 });
@@ -87,13 +114,14 @@ app.post('/api/save', async (req, res) => {
     const abs = req.body.path;
     if (!abs) return fail(res, 400, 'path required');
     if (typeof req.body.content !== 'string') return fail(res, 400, 'content required');
+    const actor = requireOperator(req);
     const rp = resolveSide('right', abs);
     let before = null;
     try { before = await fsp.readFile(rp); } catch { /* new file */ }
     const after = Buffer.from(req.body.content, 'utf8');
     await fsp.mkdir(path.dirname(rp), { recursive: true });
     await fsp.writeFile(rp, after);
-    const record = await audit.record({ operation: 'edit', absPath: abs, rightPath: rp, before, after, actor: operatorOf(req), note: req.body.note });
+    const record = await audit.record({ operation: 'edit', absPath: abs, rightPath: rp, before, after, actor, note: req.body.note });
     res.json({ ok: true, record });
   } catch (e) { fail(res, 400, e); }
 });
@@ -104,8 +132,8 @@ app.post('/api/fixed', async (req, res) => {
   try {
     const abs = req.body.path;
     if (!abs) return fail(res, 400, 'path required');
+    const actor = requireOperator(req);
     const fixed = !!req.body.fixed;
-    const actor = operatorOf(req);
     const at = new Date().toISOString();
     const val = await fixedStore.set(abs, fixed, actor, at);
     applyFixed(abs, val);

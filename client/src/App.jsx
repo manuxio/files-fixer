@@ -7,13 +7,16 @@ const short = (h) => (h ? h.slice(0, 12) : '—');
 const defaultMode = (f) => (f.status === 'added' ? 'right' : f.status === 'deleted' ? 'left' : 'diff');
 
 export default function App() {
-  const [data, setData] = useState(null);
+  const [summary, setSummary] = useState(null);
+  const [reloadToken, setReloadToken] = useState(0);
   const [loadErr, setLoadErr] = useState('');
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
 
   const [operator, setOperator] = useState(() => localStorage.getItem('ff.operator') || '');
   useEffect(() => localStorage.setItem('ff.operator', operator), [operator]);
+  const canEdit = operator.trim().length > 0;
+  const operatorRef = useRef(null);
 
   const [selected, setSelected] = useState(null);
   const [mode, setMode] = useState('diff');
@@ -22,7 +25,7 @@ export default function App() {
   const [version, setVersion] = useState(0); // bumps to force editor rebuilds after ops
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
-  const [fixedMap, setFixedMap] = useState({}); // absolute_path -> { at, by } (persistent)
+  const [fixedOverride, setFixedOverride] = useState({}); // path -> bool (optimistic, over server state)
   const [history, setHistory] = useState(null);
 
   const draftRef = useRef('');
@@ -34,57 +37,49 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToast(null), 4000);
   }, []);
 
-  const loadDiff = useCallback(async (refresh) => {
+  const loadSummary = useCallback(async (refresh) => {
     try {
       setLoadErr('');
-      const d = await api.diff(refresh);
-      setData(d);
-      const fm = {};
-      for (const w of d.websites) for (const f of w.files) if (f.fixed) fm[f.absolute_path] = { at: f.fixedAt, by: f.fixedBy };
-      setFixedMap(fm);
+      const s = await api.summary(refresh);
+      setSummary(s);
+      if (refresh) { setFixedOverride({}); setReloadToken((t) => t + 1); }
     } catch (e) {
       setLoadErr(String(e.message || e));
     }
   }, []);
 
-  useEffect(() => { loadDiff(false); }, [loadDiff]);
+  useEffect(() => { loadSummary(false); }, [loadSummary]);
 
-  const loadContents = useCallback(async (file) => {
+  const isFixed = useCallback((file) => {
+    if (!file) return false;
+    const p = file.absolute_path;
+    return p in fixedOverride ? fixedOverride[p] : !!file.fixed;
+  }, [fixedOverride]);
+
+  const loadContents = useCallback(async (file, forReload) => {
     setLoadingFile(true);
     try {
       const [left, right] = await Promise.all([
-        file.status === 'added' ? Promise.resolve({ exists: false }) : api.file('left', file.absolute_path),
-        file.status === 'deleted' ? Promise.resolve({ exists: false }) : api.file('right', file.absolute_path),
-      ]);
-      setContents({ left, right });
-    } catch (e) {
-      notify(String(e.message || e), 'err');
-      setContents({ left: null, right: null });
-    } finally {
-      setLoadingFile(false);
-    }
-  }, [notify]);
-
-  const selectFile = useCallback(async (file) => {
-    setSelected(file);
-    setMode(defaultMode(file));
-    setVersion((v) => v + 1);
-    await loadContents(file);
-  }, [loadContents]);
-
-  const reloadSelected = useCallback(async (file) => {
-    setVersion((v) => v + 1);
-    setLoadingFile(true);
-    try {
-      const [left, right] = await Promise.all([
-        api.file('left', file.absolute_path).catch(() => ({ exists: false })),
-        api.file('right', file.absolute_path).catch(() => ({ exists: false })),
+        !forReload && file.status === 'added' ? Promise.resolve({ exists: false }) : api.file('left', file.absolute_path).catch(() => ({ exists: false })),
+        !forReload && file.status === 'deleted' ? Promise.resolve({ exists: false }) : api.file('right', file.absolute_path).catch(() => ({ exists: false })),
       ]);
       setContents({ left, right });
     } finally {
       setLoadingFile(false);
     }
   }, []);
+
+  const selectFile = useCallback(async (file) => {
+    setSelected(file);
+    setMode(defaultMode(file));
+    setVersion((v) => v + 1);
+    await loadContents(file, false);
+  }, [loadContents]);
+
+  const reloadSelected = useCallback(async (file) => {
+    setVersion((v) => v + 1);
+    await loadContents(file, true);
+  }, [loadContents]);
 
   const hasLeft = !!(contents.left && contents.left.exists);
   const hasRight = !!(contents.right && contents.right.exists);
@@ -94,21 +89,36 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, version, selected]);
 
+  const ensureOperator = () => {
+    if (canEdit) return true;
+    notify('Set an operator name (top-right) before making changes', 'err');
+    if (operatorRef.current) operatorRef.current.focus();
+    return false;
+  };
+
   const toggleFixed = useCallback(async (file, value) => {
     if (!file) return;
+    const prev = file.absolute_path in fixedOverride ? fixedOverride[file.absolute_path] : !!file.fixed;
     try {
-      const r = await api.setFixed(file.absolute_path, value, operator, '');
-      setFixedMap((m) => {
-        const n = { ...m };
-        if (value) n[file.absolute_path] = { at: r.at, by: r.by };
-        else delete n[file.absolute_path];
-        return n;
+      await api.setFixed(file.absolute_path, value, operator, '');
+      setFixedOverride((o) => ({ ...o, [file.absolute_path]: value }));
+      if (value !== prev) setSummary((s) => {
+        if (!s) return s;
+        const delta = value ? 1 : -1;
+        return {
+          ...s,
+          totals: { ...s.totals, fixed: Math.max(0, s.totals.fixed + delta) },
+          websites: s.websites.map((w) => (w.name === file.website
+            ? { ...w, counts: { ...w.counts, fixed: Math.max(0, (w.counts.fixed || 0) + delta) } }
+            : w)),
+        };
       });
     } catch (e) { notify(String(e.message || e), 'err'); }
-  }, [operator, notify]);
+  }, [operator, notify, fixedOverride]);
 
   const doDelete = async () => {
-    if (!selected || !window.confirm(`Delete RIGHT file?\n\n${selected.absolute_path}\n\nA backup is written to /evidence.`)) return;
+    if (!selected || !ensureOperator()) return;
+    if (!window.confirm(`Delete RIGHT file?\n\n${selected.absolute_path}\n\nA backup is written to /evidence.`)) return;
     setBusy(true);
     try {
       await api.del(selected.absolute_path, operator, '');
@@ -121,8 +131,9 @@ export default function App() {
   };
 
   const doOverwrite = async () => {
+    if (!selected || !ensureOperator()) return;
     const verb = hasRight ? 'Overwrite' : 'Restore';
-    if (!selected || !window.confirm(`${verb} RIGHT with LEFT source?\n\n${selected.absolute_path}\n\nA backup is written to /evidence.`)) return;
+    if (!window.confirm(`${verb} RIGHT with LEFT source?\n\n${selected.absolute_path}\n\nA backup is written to /evidence.`)) return;
     setBusy(true);
     try {
       await api.overwrite(selected.absolute_path, operator, '');
@@ -135,7 +146,7 @@ export default function App() {
   };
 
   const doSave = async () => {
-    if (!selected) return;
+    if (!selected || !ensureOperator()) return;
     setBusy(true);
     try {
       await api.save(selected.absolute_path, draftRef.current, operator, '');
@@ -145,6 +156,11 @@ export default function App() {
       setMode('right');
     } catch (e) { notify(String(e.message || e), 'err'); }
     finally { setBusy(false); }
+  };
+
+  const onToggleFixedClick = () => {
+    if (!ensureOperator()) return;
+    toggleFixed(selected, !isFixed(selected));
   };
 
   const openHistory = async () => {
@@ -159,47 +175,50 @@ export default function App() {
     return { left: selected.left && selected.left.sha256, right: selected.right && selected.right.sha256 };
   }, [selected]);
 
+  const selFixed = isFixed(selected);
+
   return (
     <div className="app">
       <Sidebar
-        data={data}
+        summary={summary}
         query={query} setQuery={setQuery}
         statusFilter={statusFilter} setStatusFilter={setStatusFilter}
         selected={selected} onSelect={selectFile}
-        fixedMap={fixedMap}
+        isFixed={isFixed} reloadToken={reloadToken}
       />
 
       <main className="main">
         <div className="topbar">
           <div className="totals">
-            {data ? (
+            {summary ? (
               <>
-                <span className="dot added">{data.totals.added} added</span>
-                <span className="dot modified">{data.totals.modified} modified</span>
-                <span className="dot deleted">{data.totals.deleted} deleted</span>
-                <span className="muted">· {data.totals.fixed} fixed · {data.totals.websites} sites · {data.totals.unchanged} unchanged</span>
+                <span className="dot added">{summary.totals.added} added</span>
+                <span className="dot modified">{summary.totals.modified} modified</span>
+                <span className="dot deleted">{summary.totals.deleted} deleted</span>
+                <span className="muted">· {summary.totals.fixed} fixed · {summary.totals.websites} sites · {summary.totals.unchanged} unchanged</span>
               </>
             ) : <span className="muted">loading…</span>}
           </div>
           <div className="spacer" />
-          <label className="operator">
+          <label className={`operator ${canEdit ? '' : 'required'}`}>
             operator
-            <input value={operator} onChange={(e) => setOperator(e.target.value)} placeholder="your name" spellCheck={false} />
+            <input ref={operatorRef} value={operator} onChange={(e) => setOperator(e.target.value)} placeholder="name required" spellCheck={false} />
+            {!canEdit && <span className="op-hint">required for changes</span>}
           </label>
           <button className="btn ghost" onClick={openHistory}>History</button>
-          <button className="btn ghost" onClick={() => loadDiff(true)}>Refresh CSVs</button>
+          <button className="btn ghost" onClick={() => loadSummary(true)}>Refresh CSVs</button>
         </div>
 
         {loadErr && (
           <div className="banner err">
-            Could not load diff: {loadErr}. Check the CSV paths &amp; mounts, then Refresh.
+            Could not load: {loadErr}. Check the CSV paths &amp; mounts, then Refresh.
           </div>
         )}
 
         {!selected && !loadErr && (
           <div className="placeholder">
             <h2>Select a changed file</h2>
-            <p>Files are grouped by website. Filter by status or search by website / filename on the left.</p>
+            <p>Websites load collapsed; expand one (or search) to fetch its files on demand. Set an operator name before you can delete / overwrite / edit.</p>
           </div>
         )}
 
@@ -222,20 +241,19 @@ export default function App() {
               </div>
               <div className="spacer" />
               <button
-                className={`btn fixed-toggle ${fixedMap[selected.absolute_path] ? 'on' : ''}`}
-                disabled={busy}
-                title={fixedMap[selected.absolute_path]
-                  ? `fixed by ${fixedMap[selected.absolute_path].by || '?'} @ ${fixedMap[selected.absolute_path].at || ''}`
-                  : 'Mark this entry as fixed (persisted to /evidence + right CSV)'}
-                onClick={() => toggleFixed(selected, !fixedMap[selected.absolute_path])}
+                className={`btn fixed-toggle ${selFixed ? 'on' : ''}`}
+                disabled={busy || !canEdit}
+                title={!canEdit ? 'Set an operator name first'
+                  : selFixed ? 'Unmark fixed' : 'Mark this entry as fixed (persisted to /evidence + right CSV)'}
+                onClick={onToggleFixedClick}
               >
-                {fixedMap[selected.absolute_path] ? '✔ Fixed' : 'Mark fixed'}
+                {selFixed ? '✔ Fixed' : 'Mark fixed'}
               </button>
-              {mode === 'edit' && <button className="btn primary" disabled={busy} onClick={doSave}>Save</button>}
-              <button className="btn warn" disabled={busy || !hasLeft} onClick={doOverwrite}>
+              {mode === 'edit' && <button className="btn primary" disabled={busy || !canEdit} onClick={doSave}>Save</button>}
+              <button className="btn warn" disabled={busy || !canEdit || !hasLeft} onClick={doOverwrite}>
                 {hasRight ? 'Overwrite from left' : 'Restore from left'}
               </button>
-              <button className="btn danger" disabled={busy || !hasRight} onClick={doDelete}>Delete right</button>
+              <button className="btn danger" disabled={busy || !canEdit || !hasRight} onClick={doDelete}>Delete right</button>
             </div>
 
             <div className="viewer">

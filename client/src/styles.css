@@ -59,6 +59,18 @@ button, input { font-family: inherit; }
 .dot.added { background: var(--added); }
 .dot.modified { background: var(--modified); }
 .dot.deleted { background: var(--deleted); }
+.dot.fixedcount { background: transparent; color: var(--added); border: 1px solid var(--added); }
+
+.site-head.static { cursor: default; }
+.search-head { padding: 8px 12px; color: var(--muted); border-bottom: 1px solid var(--border); font-size: 12px; }
+.loading.small { padding: 6px 22px; }
+.load-more {
+  display: block; width: calc(100% - 24px); margin: 6px 12px; padding: 6px;
+  background: var(--panel-2); border: 1px dashed var(--border); color: var(--muted);
+  border-radius: 6px; cursor: pointer;
+}
+.load-more:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+.load-more:disabled { opacity: .5; cursor: default; }
 
 .files { padding: 2px 0; }
 .file {
@@ -94,6 +106,9 @@ button, input { font-family: inherit; }
   border: 1px solid var(--border); color: var(--text);
 }
 .operator input:focus { outline: none; border-color: var(--accent); }
+.operator.required input { border-color: var(--deleted); }
+.operator.required { color: var(--deleted); }
+.op-hint { color: var(--deleted); font-size: 11px; }
 
 .filebar { background: var(--panel); }
 .path { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

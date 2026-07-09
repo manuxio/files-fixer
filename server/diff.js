@@ -5,7 +5,8 @@ const config = require('./config');
 const { websiteOf } = require('./paths');
 const fixedStore = require('./fixed');
 
-let cache = null;      // last computed result
+let cache = null;      // last computed result (websites + counts + files)
+let allFiles = [];     // flat list of every changed file (refs shared with cache)
 let building = null;   // in-flight promise (de-dupes concurrent requests)
 
 function row(r) {
@@ -82,13 +83,19 @@ async function computeDiff() {
   }
 
   const list = [...websites.values()]
-    .map((w) => ({
-      name: w.name,
-      counts: { added: w.added.length, modified: w.modified.length, deleted: w.deleted.length, unchanged: w.unchanged },
-      files: [...w.added, ...w.modified, ...w.deleted]
+    .map((w) => {
+      const files = [...w.added, ...w.modified, ...w.deleted]
         .map(overlayFixed)
-        .sort((a, b) => a.absolute_path.localeCompare(b.absolute_path)),
-    }))
+        .sort((a, b) => a.absolute_path.localeCompare(b.absolute_path));
+      return {
+        name: w.name,
+        counts: {
+          added: w.added.length, modified: w.modified.length, deleted: w.deleted.length,
+          unchanged: w.unchanged, fixed: files.filter((f) => f.fixed).length,
+        },
+        files,
+      };
+    })
     // Only surface websites that actually have differences.
     .filter((w) => w.counts.added + w.counts.modified + w.counts.deleted > 0)
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -96,7 +103,7 @@ async function computeDiff() {
   const totals = list.reduce((t, w) => {
     t.added += w.counts.added; t.modified += w.counts.modified;
     t.deleted += w.counts.deleted; t.unchanged += w.counts.unchanged;
-    t.fixed += w.files.filter((f) => f.fixed).length;
+    t.fixed += w.counts.fixed;
     t.websites += 1; return t;
   }, { websites: 0, added: 0, modified: 0, deleted: 0, unchanged: 0, fixed: 0 });
 
@@ -111,15 +118,21 @@ async function computeDiff() {
 }
 
 // Update the cached diff in place after a fixed-state toggle (avoids a full
-// recompute). `val` is { at, by } when fixed, or null when unfixed.
+// recompute). `val` is { at, by } when fixed, or null when unfixed. Files in
+// `allFiles` are the same object refs, so mutating here updates both views.
 function applyFixed(absPath, val) {
   if (!cache) return;
   for (const w of cache.websites) {
     for (const f of w.files) {
       if (f.absolute_path === absPath) {
+        const was = !!f.fixed;
         if (val) { f.fixed = true; f.fixedAt = val.at || ''; f.fixedBy = val.by || ''; }
         else { f.fixed = false; f.fixedAt = null; f.fixedBy = null; }
-        cache.totals.fixed = cache.websites.reduce((n, ww) => n + ww.files.filter((x) => x.fixed).length, 0);
+        if (was !== !!f.fixed) {
+          const delta = f.fixed ? 1 : -1;
+          w.counts.fixed = Math.max(0, (w.counts.fixed || 0) + delta);
+          cache.totals.fixed = Math.max(0, (cache.totals.fixed || 0) + delta);
+        }
         return;
       }
     }
@@ -130,9 +143,52 @@ async function getDiff(refresh = false) {
   if (cache && !refresh) return cache;
   if (building) return building;
   building = computeDiff()
-    .then((res) => { cache = res; building = null; return res; })
+    .then((res) => {
+      cache = res;
+      allFiles = res.websites.flatMap((w) => w.files);
+      building = null;
+      return res;
+    })
     .catch((e) => { building = null; throw e; });
   return building;
 }
 
-module.exports = { getDiff, applyFixed };
+// Small payload for the sidebar: websites + counts only, never file lists.
+async function getSummary(refresh = false) {
+  const d = await getDiff(refresh);
+  return {
+    generatedAt: d.generatedAt,
+    prefix: d.prefix,
+    leftCsv: d.leftCsv,
+    rightCsv: d.rightCsv,
+    totals: d.totals,
+    websites: d.websites.map((w) => ({ name: w.name, counts: w.counts })),
+  };
+}
+
+// Paged file query. Scope to one website, or search across all (when `website`
+// is omitted). Filters by status and a case-insensitive substring `q`.
+async function queryFiles({ website, status, q, offset = 0, limit = 200 } = {}) {
+  await getDiff();
+  let files;
+  if (website) {
+    const w = cache.websites.find((x) => x.name === website);
+    files = w ? w.files : [];
+  } else {
+    files = allFiles;
+  }
+  if (status && status !== 'all') files = files.filter((f) => f.status === status);
+  if (q) {
+    const s = q.toLowerCase();
+    files = files.filter((f) =>
+      f.filename.toLowerCase().includes(s) ||
+      f.absolute_path.toLowerCase().includes(s) ||
+      f.website.toLowerCase().includes(s));
+  }
+  const total = files.length;
+  const off = Math.max(0, offset | 0);
+  const lim = Math.min(Math.max(1, limit | 0), 1000);
+  return { total, offset: off, limit: lim, files: files.slice(off, off + lim) };
+}
+
+module.exports = { getDiff, getSummary, queryFiles, applyFixed };
