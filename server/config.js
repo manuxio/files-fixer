@@ -29,6 +29,8 @@ const config = {
   rightCsv: process.env.RIGHT_CSV || '',
   // Prefix present in every CSV absolute_path, stripped to map onto the mounts
   csvPrefix: process.env.CSV_PATH_PREFIX || '/mnt/data',
+  // Pristine Joomla sources root: one subfolder per version (e.g. Joomla-3.9.21/)
+  joomlaRoot: process.env.JOOMLA_ROOT || '/joomla',
 };
 
 if (!config.leftCsv) config.leftCsv = path.join(config.evidenceRoot, 'left.csv');

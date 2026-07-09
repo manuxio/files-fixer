@@ -30,6 +30,11 @@ export default function App() {
   const [history, setHistory] = useState(null);
   const [viewers, setViewers] = useState([]); // live presence from other clients
 
+  const [joomlaVersions, setJoomlaVersions] = useState([]);
+  const [joomlaVersion, setJoomlaVersion] = useState(() => localStorage.getItem('ff.joomlaVersion') || '');
+  useEffect(() => { if (joomlaVersion) localStorage.setItem('ff.joomlaVersion', joomlaVersion); }, [joomlaVersion]);
+  const [joomla, setJoomla] = useState(null); // pristine-file lookup for the selected file
+
   const draftRef = useRef('');
   const toastTimer = useRef(null);
   const selectedRef = useRef(null);
@@ -93,6 +98,28 @@ export default function App() {
     const t = setInterval(send, 15000);
     return () => clearInterval(t);
   }, [operator, selected, mode]);
+
+  // discover pristine Joomla versions available on the server
+  useEffect(() => {
+    api.joomlaVersions()
+      .then((r) => {
+        const vs = r.versions || [];
+        setJoomlaVersions(vs);
+        setJoomlaVersion((cur) => cur || (vs[0] ? vs[0].id : ''));
+      })
+      .catch(() => {});
+  }, []);
+
+  // look up the pristine core file when in Joomla-compare mode
+  useEffect(() => {
+    if (mode !== 'joomla' || !selected || !joomlaVersion) return undefined;
+    let alive = true;
+    setJoomla({ loading: true });
+    api.joomlaFile(joomlaVersion, selected.absolute_path)
+      .then((r) => { if (alive) setJoomla({ loading: false, ...r }); })
+      .catch((e) => { if (alive) setJoomla({ loading: false, error: String(e.message || e) }); });
+    return () => { alive = false; };
+  }, [mode, selected, joomlaVersion, version]);
 
   const others = useMemo(() => viewers.filter((v) => v.id !== clientId), [viewers]);
   const viewersByPath = useMemo(() => {
@@ -301,6 +328,19 @@ export default function App() {
                 <button className={`btn ${mode === 'left' ? 'active' : ''}`} disabled={!hasLeft} onClick={() => setMode('left')}>Left</button>
                 <button className={`btn ${mode === 'right' ? 'active' : ''}`} disabled={!hasRight} onClick={() => setMode('right')}>Right</button>
                 <button className={`btn ${mode === 'edit' ? 'active' : ''}`} disabled={!hasRight} onClick={() => setMode('edit')}>Edit right</button>
+                {joomlaVersions.length > 0 && (
+                  <>
+                    <button
+                      className={`btn ${mode === 'joomla' ? 'active' : ''}`}
+                      disabled={!(hasRight || hasLeft)}
+                      title="Diff the current file against pristine Joomla core"
+                      onClick={() => setMode('joomla')}
+                    >vs Joomla</button>
+                    <select className="jversion" value={joomlaVersion} onChange={(e) => setJoomlaVersion(e.target.value)} title="Joomla version to compare against">
+                      {joomlaVersions.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+                    </select>
+                  </>
+                )}
               </div>
               <div className="spacer" />
               <button
@@ -333,6 +373,16 @@ export default function App() {
               {!loadingFile && mode === 'edit' && hasRight && (
                 <CodeView value={contents.right.content} path={selected.absolute_path} docKey={docKey} editable onChange={(v) => { draftRef.current = v; }} />
               )}
+              {!loadingFile && mode === 'joomla' && (
+                <JoomlaBody
+                  joomla={joomla}
+                  current={hasRight ? contents.right : (hasLeft ? contents.left : null)}
+                  currentSide={hasRight ? 'right' : 'left'}
+                  path={selected.absolute_path}
+                  version={joomlaVersion}
+                  docKey={`${selected.absolute_path}::joomla::${joomlaVersion}::${version}`}
+                />
+              )}
             </div>
           </>
         )}
@@ -349,6 +399,23 @@ function SideBody({ side, path, docKey }) {
   if (!side || !side.exists) return <div className="loading">file not present on this side.</div>;
   if (side.tooLarge) return <div className="loading">file too large to display ({side.size} bytes).</div>;
   return <CodeView value={side.content} path={path} docKey={docKey} />;
+}
+
+function JoomlaBody({ joomla, current, currentSide, path, version, docKey }) {
+  if (!joomla || joomla.loading) return <div className="loading">looking up {version}…</div>;
+  if (joomla.error) return <div className="loading">Joomla lookup failed: {joomla.error}</div>;
+  if (!joomla.exists) return <div className="loading">No matching file in <b>{version}</b> — this path is not part of that Joomla version’s core (custom file, or wrong version).</div>;
+  if (joomla.tooLarge) return <div className="loading">pristine file too large to display ({joomla.size} bytes).</div>;
+  const cur = current && current.exists ? current.content : '';
+  return (
+    <div className="joomla-wrap">
+      <div className="joomla-note">
+        pristine <code>{version}/{joomla.joomlaPath}</code> &nbsp;→&nbsp; current <b>{currentSide}</b> file
+        {(!current || !current.exists) && ' (current side missing — showing empty)'}
+      </div>
+      <div className="joomla-diff"><DiffView left={joomla.content} right={cur} path={path} docKey={docKey} /></div>
+    </div>
+  );
 }
 
 function HistoryModal({ records, onClose }) {

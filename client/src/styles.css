@@ -132,7 +132,18 @@ button, input { font-family: inherit; }
 .btn.ghost { background: transparent; }
 .btn.fixed-toggle.on { background: var(--added); border-color: var(--added); color: #06210d; font-weight: 700; }
 
+.jversion {
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  border-radius: 6px; padding: 5px 6px; max-width: 150px;
+}
+.jversion:focus { outline: none; border-color: var(--accent); }
+
 .viewer { flex: 1; min-height: 0; overflow: hidden; position: relative; }
+.joomla-wrap { display: flex; flex-direction: column; height: 100%; }
+.joomla-note { flex: 0 0 auto; padding: 6px 12px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+.joomla-note code { color: var(--text); }
+.joomla-diff { flex: 1 1 auto; min-height: 0; }
+.joomla-diff .cm-host { height: 100%; }
 .cm-host { height: 100%; overflow: hidden; }
 /* single-file view: the editor fills the host and its own scroller scrolls */
 .cm-host:not(.merge) .cm-editor { height: 100%; }

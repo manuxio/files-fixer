@@ -15,6 +15,8 @@ services:
       RIGHT_CSV: /evidence/right.csv
       # Prefix present in every CSV absolute_path (mapped onto the mounts):
       CSV_PATH_PREFIX: /mnt/data
+      # Pristine Joomla sources (one subfolder per version) for core-file diffs:
+      JOOMLA_ROOT: /joomla
     volumes:
       # left is the trusted source — mount read-only so it can never be touched
       - ./sample/left:/left:ro
@@ -22,5 +24,7 @@ services:
       - ./sample/right:/right
       # evidence holds the CSVs, audit.log and backups — writable
       - ./sample/evidence:/evidence
+      # pristine Joomla sources — read-only; replace with your own versions
+      - ./sample/joomla:/joomla:ro
     # For a real investigation, replace the ./sample/* host paths above with
     # your evidence/data mounts. left stays :ro, right and evidence stay writable.

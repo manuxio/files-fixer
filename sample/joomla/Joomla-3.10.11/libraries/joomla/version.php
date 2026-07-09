@@ -1,0 +1,15 @@
+<?php
+defined('_JEXEC') or die;
+
+final class JVersion
+{
+    public $PRODUCT = 'Joomla!';
+    public $RELEASE = '3.10';
+    public $DEV_LEVEL = '11';
+    public $BUILD_DATE = '2020-01-01';
+
+    public function getShortVersion()
+    {
+        return $this->RELEASE . '.' . $this->DEV_LEVEL;
+    }
+}

@@ -12,6 +12,7 @@ fix the **right** side — with every disruptive action backed up and logged to
 - syntax highlighting for `.php`, `.html`/`.htm`, `.js`
 - every delete/overwrite/edit → `/evidence/audit.log` (JSONL) + a timestamped backup folder (`before`, `after`, `meta.json`)
 - **multi-user**: all connected browsers update live (Server-Sent Events). Others' fixes/deletes/overwrites/edits appear immediately, and a presence marker shows who is viewing/editing each file — so two operators don't remediate the same thing twice.
+- **Joomla core diff**: for a file that maps onto Joomla core, diff it against pristine upstream source (choose the version) to reveal injected code. Sources are mounted at `/joomla`; versions are auto-discovered.
 
 ---
 
@@ -73,6 +74,7 @@ override `LEFT_CSV` / `RIGHT_CSV`.
 | `/left`      | trusted / baseline data root     | **ro** |
 | `/right`     | data root being remediated       | rw     |
 | `/evidence`  | CSVs + `audit.log` + `backups/`  | rw     |
+| `/joomla`    | pristine Joomla sources (one subfolder per version) | **ro** |
 
 ### Environment variables
 
@@ -86,10 +88,47 @@ override `LEFT_CSV` / `RIGHT_CSV`.
 | `LEFT_CSV`        | `/evidence/left.csv`  | left manifest |
 | `RIGHT_CSV`       | `/evidence/right.csv` | right manifest |
 | `CSV_PATH_PREFIX` | `/mnt/data`           | prefix stripped from `absolute_path` to map onto the mounts |
+| `JOOMLA_ROOT`     | `/joomla`             | pristine Joomla sources root (one subfolder per version) |
 
 CSV format: `absolute_path,filename,last_modified,size_bytes,sha256`, where
 `absolute_path` starts with `<CSV_PATH_PREFIX>/<website>/…`. Path-traversal
 outside a mount root is rejected.
+
+---
+
+## Compare against pristine Joomla core
+
+When a changed file maps onto a Joomla core path, you can diff the live file
+against the pristine upstream source to spot injected code, regardless of the
+`left` baseline.
+
+Mount your Joomla sources at `/joomla`, one subfolder per version — the folder
+name is the version label shown in the UI:
+
+```text
+/joomla/
+  Joomla-3.9.21/      # a full, pristine Joomla install
+  Joomla-3.10.12/
+  Joomla-4.4.4/
+  Joomla-5.2.6/
+```
+
+Versions are auto-discovered (`GET /api/joomla/versions`). In the toolbar pick a
+version and click **vs Joomla**: the app locates the matching core file (by
+matching the path suffix, so it works whether Joomla is at the site root or in a
+subfolder) and shows a synced diff of *pristine → current right file*. If the
+path isn't part of that version's core, it says so (custom file / wrong version).
+
+Populate `/joomla` with the official full packages (needs `curl` + `unzip`):
+
+```bash
+JOOMLA_ROOT=./sample/joomla ./scripts/fetch-joomla.sh 3.9.21 3.10.12 4.4.4 5.2.6
+```
+
+> Joomla trees are **not** baked into the image (that would add gigabytes). They
+> are mounted, so you ship only the versions you actually need. The bundled demo
+> ships two tiny stub versions (`3.9.21`, `3.10.11`) so the feature works out of
+> the box.
 
 ---
 

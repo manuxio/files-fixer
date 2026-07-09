@@ -32,5 +32,7 @@ export const api = {
   setFixed: (path, fixed, operator, note) => post('/api/fixed', { path, fixed, operator, note }),
   presence: (operator, path, mode) => post('/api/presence', { operator, path, mode }),
   eventsUrl: () => '/api/events?clientId=' + encodeURIComponent(clientId),
+  joomlaVersions: () => j('/api/joomla/versions'),
+  joomlaFile: (version, path) => j(`/api/joomla/file?version=${encodeURIComponent(version)}&path=${encodeURIComponent(path)}`),
   audit: () => j('/api/audit'),
 };

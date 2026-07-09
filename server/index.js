@@ -9,6 +9,7 @@ const { resolveSide, websiteOf } = require('./paths');
 const audit = require('./audit');
 const fixedStore = require('./fixed');
 const events = require('./events');
+const joomla = require('./joomla');
 
 const app = express();
 app.use(express.json({ limit: '25mb' }));
@@ -174,6 +175,23 @@ app.post('/api/fixed', async (req, res) => {
   } catch (e) { fail(res, 400, e); }
 });
 
+// Available pristine Joomla versions (subfolders of JOOMLA_ROOT).
+app.get('/api/joomla/versions', async (req, res) => {
+  try { res.json({ versions: await joomla.listVersions() }); }
+  catch (e) { fail(res, 500, e); }
+});
+
+// Pristine Joomla core file matching a website path, for the chosen version.
+app.get('/api/joomla/file', async (req, res) => {
+  try {
+    const version = req.query.version;
+    const abs = req.query.path;
+    if (!version) return fail(res, 400, 'version required');
+    if (!abs) return fail(res, 400, 'path required');
+    res.json(await joomla.findFile(version, abs));
+  } catch (e) { fail(res, 400, e); }
+});
+
 app.get('/api/audit', async (req, res) => {
   try { res.json({ records: await audit.tail(Number(req.query.limit) || 200) }); }
   catch (e) { fail(res, 500, e); }
@@ -191,4 +209,5 @@ app.listen(config.port, () => {
   console.log(`  left   : ${config.leftRoot}   (${config.leftCsv})`);
   console.log(`  right  : ${config.rightRoot}   (${config.rightCsv})`);
   console.log(`  evidence: ${config.evidenceRoot}`);
+  console.log(`  joomla  : ${config.joomlaRoot}`);
 });
