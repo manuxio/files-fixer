@@ -154,6 +154,23 @@ button, input { font-family: inherit; }
    that collapses the panes and kills scrolling. */
 .cm-host.merge { overflow: hidden; }
 .cm-host.merge .cm-mergeView { height: 100%; }
+
+/* The @codemirror/merge base theme highlights changes at ~8% opacity, which is
+   nearly invisible on a dark editor. Repaint them with strong colours:
+   left/original (a) = red, right/current (b) = green, word-level = brighter. */
+.cm-host.merge .cm-merge-a .cm-changedLine,
+.cm-host.merge .cm-deletedChunk { background-color: rgba(248, 81, 73, 0.16) !important; }
+.cm-host.merge .cm-merge-b .cm-changedLine,
+.cm-host.merge .cm-inlineChangedLine { background-color: rgba(63, 185, 80, 0.16) !important; }
+.cm-host.merge .cm-merge-a .cm-changedText,
+.cm-host.merge .cm-deletedChunk .cm-deletedText {
+  background: rgba(248, 81, 73, 0.40) !important; border-radius: 2px;
+}
+.cm-host.merge .cm-merge-b .cm-changedText {
+  background: rgba(63, 185, 80, 0.40) !important; border-radius: 2px;
+}
+.cm-host.merge .cm-changedLineGutter { background-color: rgba(210, 153, 34, 0.45) !important; }
+.cm-host.merge .cm-deletedLineGutter { background-color: rgba(248, 81, 73, 0.45) !important; }
 .loading, .placeholder { padding: 24px; color: var(--muted); }
 .placeholder h2 { color: var(--text); font-weight: 600; }
 
