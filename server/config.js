@@ -31,9 +31,18 @@ const config = {
   csvPrefix: process.env.CSV_PATH_PREFIX || '/mnt/data',
   // Pristine Joomla sources root: one subfolder per version (e.g. Joomla-3.9.21/)
   joomlaRoot: process.env.JOOMLA_ROOT || '/joomla',
+  // JCE remediation dropper + packages (bundled under ./assets; override with JCE_ASSETS_ROOT)
+  jceAssetsRoot: process.env.JCE_ASSETS_ROOT || path.join(__dirname, '..', 'assets'),
+  jceDropper: process.env.JCE_DROPPER || 'dropper.5.3.php',
+  jcePkgFull: process.env.JCE_PKG_FULL || 'pkg_jce_pro_29998.zip',   // full upgrade -> 2.9.99.8
+  jcePkgPatch: process.env.JCE_PKG_PATCH || 'patch_jce_27x_29x.zip', // legacy file-patch (PHP < 7.4)
+  jceTarget: process.env.JCE_TARGET || '2.9.99.8',
+  patchExpirySec: parseInt(process.env.PATCH_EXPIRY_SEC || '1800', 10), // dropper token lifetime
+  patchesCsv: process.env.PATCHES_CSV || '',
 };
 
 if (!config.leftCsv) config.leftCsv = path.join(config.evidenceRoot, 'left.csv');
 if (!config.rightCsv) config.rightCsv = path.join(config.evidenceRoot, 'right.csv');
+if (!config.patchesCsv) config.patchesCsv = path.join(config.evidenceRoot, 'patches.csv');
 
 module.exports = config;

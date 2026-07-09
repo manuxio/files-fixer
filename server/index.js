@@ -10,6 +10,8 @@ const audit = require('./audit');
 const fixedStore = require('./fixed');
 const events = require('./events');
 const joomla = require('./joomla');
+const patches = require('./patches');
+const remediate = require('./remediate');
 
 const app = express();
 app.use(express.json({ limit: '25mb' }));
@@ -58,9 +60,17 @@ app.get('/api/health', (req, res) => res.json({ ok: true, config: {
 } }));
 
 // Lightweight sidebar payload: websites + counts only (no file lists).
+// Also carries each website's latest JCE-patch status (for the <patched> label).
 app.get('/api/summary', async (req, res) => {
-  try { res.json(await getSummary(req.query.refresh === '1')); }
-  catch (e) { fail(res, 500, e); }
+  try {
+    const s = await getSummary(req.query.refresh === '1');
+    const pmap = patches.map();
+    s.websites = s.websites.map((w) => (pmap[w.name]
+      ? { ...w, patched: { status: pmap[w.name].status, at: pmap[w.name].timestamp, jce: pmap[w.name].jce_after } }
+      : w));
+    s.totals.patched = Object.values(pmap).filter((p) => p.status === 'patched').length;
+    res.json(s);
+  } catch (e) { fail(res, 500, e); }
 });
 
 // Paged files. Scope with ?website=, search across all with ?q=, filter with
@@ -192,6 +202,54 @@ app.get('/api/joomla/file', async (req, res) => {
   } catch (e) { fail(res, 400, e); }
 });
 
+// JCE remediation availability (are the bundled dropper + packages present?).
+app.get('/api/jce/status', (req, res) => res.json(remediate.assetStatus()));
+
+// Latest patch record per website + full history.
+app.get('/api/patches', (req, res) => {
+  res.json({ target: config.jceTarget, byWebsite: patches.map(), patches: patches.all() });
+});
+
+// Temporarily drop the dropper into <website>'s docroot and drive it to patch
+// JCE to the target version. Logged to patches.csv + a per-run detail JSON,
+// broadcast to other operators.
+app.post('/api/patch-jce', async (req, res) => {
+  try {
+    const actor = requireOperator(req);
+    const website = req.body && req.body.website;
+    const baseUrl = req.body && req.body.baseUrl;
+    if (!website) return fail(res, 400, 'website required');
+    if (!baseUrl) return fail(res, 400, 'baseUrl required');
+    const { record, detail } = await remediate.patchWebsite({
+      website, baseUrl,
+      basicUser: req.body.basicUser, basicPass: req.body.basicPass,
+      operator: actor,
+    });
+    await patches.append(record);
+    await writePatchDetail(record, detail);
+    await audit.event({
+      operation: 'patch-jce', absPath: `${config.csvPrefix}/${website}/`, actor,
+      note: `${record.status}: ${record.package} ${record.jce_before || '?'} -> ${record.jce_after || '?'} (${record.note})`,
+      extra: { website, base_url: baseUrl, status: record.status, package: record.package },
+    });
+    events.broadcast('patched', {
+      website, status: record.status, jce_after: record.jce_after, by: actor,
+      at: record.timestamp, clientId: originOf(req),
+    });
+    res.json({ ok: true, record, detail });
+  } catch (e) { fail(res, e.status || 400, e); }
+});
+
+async function writePatchDetail(record, detail) {
+  try {
+    const dir = path.join(config.evidenceRoot, 'patches');
+    await fsp.mkdir(dir, { recursive: true });
+    const stamp = record.timestamp.replace(/[:.]/g, '-');
+    const safe = String(record.website).replace(/[^A-Za-z0-9._-]+/g, '_');
+    await fsp.writeFile(path.join(dir, `${stamp}__${safe}.json`), JSON.stringify({ ...record, detail }, null, 2));
+  } catch (e) { console.error('[patch] detail write failed:', e.message); }
+}
+
 app.get('/api/audit', async (req, res) => {
   try { res.json({ records: await audit.tail(Number(req.query.limit) || 200) }); }
   catch (e) { fail(res, 500, e); }
@@ -210,4 +268,6 @@ app.listen(config.port, () => {
   console.log(`  right  : ${config.rightRoot}   (${config.rightCsv})`);
   console.log(`  evidence: ${config.evidenceRoot}`);
   console.log(`  joomla  : ${config.joomlaRoot}`);
+  const a = remediate.assetStatus();
+  console.log(`  jce     : ${config.jceAssetsRoot} (dropper:${a.dropper} full:${a.full} patch:${a.patch}) target ${config.jceTarget}`);
 });

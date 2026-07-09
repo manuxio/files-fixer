@@ -27,6 +27,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
   const [fixedOverride, setFixedOverride] = useState({}); // path -> bool (optimistic, over server state)
+  const [multiSel, setMultiSel] = useState({}); // path -> file (bulk selection, scoped to one website)
   const [history, setHistory] = useState(null);
   const [viewers, setViewers] = useState([]); // live presence from other clients
 
@@ -34,6 +35,13 @@ export default function App() {
   const [joomlaVersion, setJoomlaVersion] = useState(() => localStorage.getItem('ff.joomlaVersion') || '');
   useEffect(() => { if (joomlaVersion) localStorage.setItem('ff.joomlaVersion', joomlaVersion); }, [joomlaVersion]);
   const [joomla, setJoomla] = useState(null); // pristine-file lookup for the selected file
+
+  const [jceAvailable, setJceAvailable] = useState(false);
+  const [patchedMap, setPatchedMap] = useState({});   // website -> { status, at, jce }
+  const [patchTarget, setPatchTarget] = useState(null); // website name -> opens the dialog
+  const [patchForm, setPatchForm] = useState({ baseUrl: '', basicUser: '', basicPass: '' });
+  const [patchBusy, setPatchBusy] = useState(false);
+  const [patchResult, setPatchResult] = useState(null);
 
   const draftRef = useRef('');
   const toastTimer = useRef(null);
@@ -51,6 +59,9 @@ export default function App() {
       setLoadErr('');
       const s = await api.summary(refresh);
       setSummary(s);
+      const pm = {};
+      for (const w of s.websites) if (w.patched) pm[w.name] = w.patched;
+      setPatchedMap(pm);
       if (refresh) { setFixedOverride({}); setReloadToken((t) => t + 1); }
     } catch (e) {
       setLoadErr(String(e.message || e));
@@ -86,6 +97,11 @@ export default function App() {
       scheduleSummaryRefresh();
       notify(`${d.by || 'someone'}: ${d.operation} ${base(d.path)}`);
     });
+    es.addEventListener('patched', (e) => {
+      const d = JSON.parse(e.data);
+      setPatchedMap((m) => ({ ...m, [d.website]: { status: d.status, at: d.at, jce: d.jce_after } }));
+      if (d.clientId !== clientId) notify(`${d.by || 'someone'}: JCE patch ${d.status} on ${d.website}${d.jce_after ? ' (' + d.jce_after + ')' : ''}`);
+    });
     es.onerror = () => { /* EventSource reconnects automatically */ };
     return () => es.close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -98,6 +114,9 @@ export default function App() {
     const t = setInterval(send, 15000);
     return () => clearInterval(t);
   }, [operator, selected, mode]);
+
+  // is the JCE remediation feature available (dropper + packages bundled)?
+  useEffect(() => { api.jceStatus().then((s) => setJceAvailable(!!s.available)).catch(() => {}); }, []);
 
   // discover pristine Joomla versions available on the server
   useEffect(() => {
@@ -241,9 +260,72 @@ export default function App() {
     toggleFixed(selected, !isFixed(selected));
   };
 
+  // --- bulk multi-select (same website): mark fixed / delete only ---
+  const toggleMulti = useCallback((file) => {
+    setMultiSel((prev) => {
+      if (prev[file.absolute_path]) { const n = { ...prev }; delete n[file.absolute_path]; return n; }
+      const first = Object.values(prev)[0];
+      if (first && first.website !== file.website) return { [file.absolute_path]: file }; // switch website
+      return { ...prev, [file.absolute_path]: file };
+    });
+  }, []);
+  const clearMulti = () => setMultiSel({});
+  const multiFiles = Object.values(multiSel);
+  const multiWebsite = multiFiles.length ? multiFiles[0].website : null;
+
+  const bulkFixed = async () => {
+    if (!ensureOperator()) return;
+    setBusy(true);
+    try { await Promise.all(multiFiles.map((f) => toggleFixed(f, true))); notify(`Marked ${multiFiles.length} fixed`); clearMulti(); }
+    catch (e) { notify(String(e.message || e), 'err'); }
+    finally { setBusy(false); }
+  };
+
+  const bulkDelete = async () => {
+    if (!ensureOperator()) return;
+    const del = multiFiles.filter((f) => f.status !== 'deleted');
+    if (!del.length) { notify('No deletable right-side files in selection', 'err'); return; }
+    if (!window.confirm(`Delete ${del.length} RIGHT file(s) in ${multiWebsite}?\n\nEach is backed up to /evidence.`)) return;
+    setBusy(true);
+    try {
+      await Promise.all(del.map(async (f) => { await api.del(f.absolute_path, operator, ''); await toggleFixed(f, true); }));
+      notify(`Deleted ${del.length} (backed up to /evidence)`);
+      if (selected && multiSel[selected.absolute_path]) await reloadSelected(selected);
+      clearMulti();
+    } catch (e) { notify(String(e.message || e), 'err'); }
+    finally { setBusy(false); }
+  };
+
   const openHistory = async () => {
     try { setHistory((await api.audit()).records); }
     catch (e) { notify(String(e.message || e), 'err'); }
+  };
+
+  const openPatch = (website) => {
+    if (!ensureOperator()) return;
+    setPatchTarget(website);
+    setPatchForm({ baseUrl: '', basicUser: '', basicPass: '' });
+    setPatchResult(null);
+  };
+
+  const runPatch = async () => {
+    if (!ensureOperator()) return;
+    if (!patchForm.baseUrl.trim()) { notify('Base URL required', 'err'); return; }
+    setPatchBusy(true); setPatchResult(null);
+    try {
+      const r = await api.patchJce({
+        website: patchTarget, baseUrl: patchForm.baseUrl.trim(),
+        basicUser: patchForm.basicUser || undefined, basicPass: patchForm.basicPass || undefined,
+        operator,
+      });
+      setPatchResult(r.record);
+      setPatchedMap((m) => ({ ...m, [patchTarget]: { status: r.record.status, at: r.record.timestamp, jce: r.record.jce_after } }));
+      const good = r.record.status === 'patched' || r.record.status === 'already';
+      notify(`JCE ${r.record.status}: ${patchTarget}`, good ? 'ok' : 'err');
+    } catch (e) {
+      setPatchResult({ status: 'failed', note: String(e.message || e) });
+      notify(String(e.message || e), 'err');
+    } finally { setPatchBusy(false); }
   };
 
   const docKey = selected ? `${selected.absolute_path}::${mode}::${version}` : 'none';
@@ -264,6 +346,9 @@ export default function App() {
         selected={selected} onSelect={selectFile}
         isFixed={isFixed} reloadToken={reloadToken}
         viewersByPath={viewersByPath}
+        patchedMap={patchedMap}
+        onPatch={jceAvailable ? openPatch : null}
+        multiSel={multiSel} onToggleMulti={toggleMulti}
       />
 
       <main className="main">
@@ -293,6 +378,16 @@ export default function App() {
           <button className="btn ghost" onClick={openHistory}>History</button>
           <button className="btn ghost" onClick={() => loadSummary(true)}>Refresh CSVs</button>
         </div>
+
+        {multiFiles.length > 0 && (
+          <div className="bulkbar">
+            <span><b>{multiFiles.length}</b> selected · {multiWebsite}</span>
+            <div className="spacer" />
+            <button className="btn fixed-toggle on" disabled={busy || !canEdit} onClick={bulkFixed}>Mark fixed</button>
+            <button className="btn danger" disabled={busy || !canEdit} onClick={bulkDelete}>Delete right</button>
+            <button className="btn ghost" onClick={clearMulti}>Clear</button>
+          </div>
+        )}
 
         {loadErr && (
           <div className="banner err">
@@ -391,6 +486,59 @@ export default function App() {
       </main>
 
       {history && <HistoryModal records={history} onClose={() => setHistory(null)} />}
+      {patchTarget && (
+        <PatchModal
+          website={patchTarget} form={patchForm} setForm={setPatchForm}
+          busy={patchBusy} result={patchResult} onRun={runPatch}
+          onClose={() => { if (!patchBusy) setPatchTarget(null); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function PatchModal({ website, form, setForm, busy, result, onRun, onClose }) {
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal small" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>Patch JCE → 2.9.99.8 · {website}</h3>
+          <button className="btn ghost" disabled={busy} onClick={onClose}>Close</button>
+        </div>
+        <div className="modal-body pad">
+          <p className="muted">
+            Temporarily drops the remediation tool + packages into this site's docroot on the right,
+            drives it over HTTP (preflight → install → verify), then removes them. TLS is not verified.
+          </p>
+          <label className="field">Base URL (site docroot)
+            <input autoFocus placeholder="https://example.com" value={form.baseUrl} onChange={set('baseUrl')} spellCheck={false} disabled={busy} />
+          </label>
+          <div className="field-row">
+            <label className="field">Basic auth user (optional)
+              <input value={form.basicUser} onChange={set('basicUser')} spellCheck={false} disabled={busy} autoComplete="off" />
+            </label>
+            <label className="field">Basic auth password (optional)
+              <input type="password" value={form.basicPass} onChange={set('basicPass')} disabled={busy} autoComplete="off" />
+            </label>
+          </div>
+          {result && (
+            <div className={`patch-result ${result.status}`}>
+              <b>{result.status}</b>
+              {result.package ? ` · ${result.package}` : ''}
+              {result.jce_before || result.jce_after ? ` · JCE ${result.jce_before || '?'} → ${result.jce_after || '?'}` : ''}
+              {result.php_version ? ` · PHP ${result.php_version}` : ''}
+              {result.note ? <div className="muted">{result.note}</div> : null}
+            </div>
+          )}
+        </div>
+        <div className="modal-foot">
+          <span className="muted">{busy ? 'running… (install can take a minute)' : 'target 2.9.99.8'}</span>
+          <button className="btn primary" disabled={busy || !form.baseUrl.trim()} onClick={onRun}>
+            {busy ? 'Patching…' : 'Patch now'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

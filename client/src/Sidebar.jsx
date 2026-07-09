@@ -4,16 +4,20 @@ import { api } from './api.js';
 const STATUS_LABEL = { added: 'A', modified: 'M', deleted: 'D' };
 const LIMIT = 200;
 
-function FileRow({ f, selected, onSelect, isFixed, viewers }) {
+function FileRow({ f, selected, onSelect, isFixed, viewers, checked, onToggle }) {
   const fx = isFixed(f);
   const isSel = selected && selected.absolute_path === f.absolute_path;
   const editing = viewers && viewers.some((v) => v.mode === 'edit');
   return (
     <div
-      className={`file ${f.status} ${isSel ? 'selected' : ''} ${fx ? 'fixed' : ''}`}
+      className={`file ${f.status} ${isSel ? 'selected' : ''} ${fx ? 'fixed' : ''} ${checked ? 'checked' : ''}`}
       onClick={() => onSelect(f)}
       title={f.absolute_path}
     >
+      <input
+        type="checkbox" className="file-check" checked={!!checked}
+        onClick={(e) => e.stopPropagation()} onChange={() => onToggle && onToggle(f)}
+      />
       <span className={`badge ${f.status}`}>{STATUS_LABEL[f.status]}</span>
       <span className="fname">{f.filename}</span>
       {viewers && viewers.length > 0 && (
@@ -24,7 +28,13 @@ function FileRow({ f, selected, onSelect, isFixed, viewers }) {
   );
 }
 
-export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilter, selected, onSelect, isFixed, reloadToken, viewersByPath = {} }) {
+function PatchedLabel({ p }) {
+  if (!p) return null;
+  const cls = p.status === 'patched' || p.status === 'already' ? 'ok' : 'bad';
+  return <span className={`patched-label ${cls}`} title={`JCE ${p.status}${p.jce ? ' ' + p.jce : ''}${p.at ? ' @ ' + p.at : ''}`}>&lt;patched&gt;</span>;
+}
+
+export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilter, selected, onSelect, isFixed, reloadToken, viewersByPath = {}, patchedMap = {}, onPatch = null, multiSel = {}, onToggleMulti = null }) {
   const [expanded, setExpanded] = useState({});
   const [browse, setBrowse] = useState({});   // name -> { files, total, offset, loading }
   const [search, setSearch] = useState(null); // { files, total, offset, loading }
@@ -143,9 +153,9 @@ export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilte
             </div>
             {searchGroups.map((g) => (
               <div className="site" key={g.name}>
-                <div className="site-head static"><span className="site-name" title={g.name}>{g.name}</span></div>
+                <div className="site-head static"><span className="site-name" title={g.name}>{g.name}</span><PatchedLabel p={patchedMap[g.name]} /></div>
                 <div className="files">
-                  {g.files.map((f) => <FileRow key={f.absolute_path} f={f} selected={selected} onSelect={onSelect} isFixed={isFixed} viewers={viewersByPath[f.absolute_path]} />)}
+                  {g.files.map((f) => <FileRow key={f.absolute_path} f={f} selected={selected} onSelect={onSelect} isFixed={isFixed} viewers={viewersByPath[f.absolute_path]} checked={!!multiSel[f.absolute_path]} onToggle={onToggleMulti} />)}
                 </div>
               </div>
             ))}
@@ -167,12 +177,19 @@ export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilte
               <div className="site-head" onClick={() => toggleSite(w.name)}>
                 <span className="caret">{isOpen ? '▾' : '▸'}</span>
                 <span className="site-name" title={w.name}>{w.name}</span>
+                <PatchedLabel p={patchedMap[w.name]} />
+                {onPatch && (
+                  <button
+                    className="patch-btn" title="Patch JCE to 2.9.99.8"
+                    onClick={(e) => { e.stopPropagation(); onPatch(w.name); }}
+                  >⛨</button>
+                )}
                 <Counts c={w.counts} />
               </div>
               {isOpen && (
                 <div className="files">
                   {page && page.loading && page.files.length === 0 && <div className="loading small">loading…</div>}
-                  {page && page.files.map((f) => <FileRow key={f.absolute_path} f={f} selected={selected} onSelect={onSelect} isFixed={isFixed} viewers={viewersByPath[f.absolute_path]} />)}
+                  {page && page.files.map((f) => <FileRow key={f.absolute_path} f={f} selected={selected} onSelect={onSelect} isFixed={isFixed} viewers={viewersByPath[f.absolute_path]} checked={!!multiSel[f.absolute_path]} onToggle={onToggleMulti} />)}
                   {page && page.files.length < page.total && (
                     <button className="load-more" disabled={page.loading} onClick={() => loadMoreBrowse(w.name)}>
                       {page.loading ? 'loading…' : `Load more (${page.total - page.files.length} left)`}

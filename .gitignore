@@ -8,3 +8,10 @@ client/dist/
 /right.csv
 sample/evidence/backups/
 sample/evidence/audit.log
+sample/evidence/fixed.json
+sample/evidence/patches.csv
+sample/evidence/patches/
+# JCE assets live in assets/ (committed there); ignore the working copies at repo root
+/dropper.5.3.php
+/pkg_jce_pro_29998.zip
+/patch_jce_27x_29x.zip

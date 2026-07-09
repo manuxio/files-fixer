@@ -54,7 +54,12 @@ button, input { font-family: inherit; }
 .site-head:hover { background: var(--panel-2); }
 .caret { width: 10px; color: var(--muted); }
 .site-name { font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.site-counts { display: flex; gap: 4px; }
+.site-counts { display: flex; gap: 4px; margin-left: auto; }
+.patched-label { font-family: ui-monospace, monospace; font-size: 10px; font-weight: 700; padding: 1px 4px; border-radius: 3px; }
+.patched-label.ok { color: var(--added); border: 1px solid var(--added); }
+.patched-label.bad { color: var(--deleted); border: 1px solid var(--deleted); }
+.patch-btn { background: transparent; border: 1px solid var(--border); color: var(--muted); border-radius: 4px; cursor: pointer; font-size: 11px; padding: 0 5px; line-height: 1.4; }
+.patch-btn:hover { border-color: var(--accent); color: var(--accent); }
 .dot { font-size: 11px; padding: 0 6px; border-radius: 999px; color: #0b0e12; font-weight: 700; }
 .dot.added { background: var(--added); }
 .dot.modified { background: var(--modified); }
@@ -80,6 +85,8 @@ button, input { font-family: inherit; }
 .file:hover { background: var(--panel-2); }
 .file.selected { background: #223049; border-left-color: var(--accent); }
 .file.fixed .fname { text-decoration: line-through; color: var(--muted); }
+.file.checked { background: #1d2b1f; }
+.file-check { margin: 0; cursor: pointer; accent-color: var(--accent); flex: 0 0 auto; }
 .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .tick { color: var(--added); }
 .viewer-badge { font-size: 11px; filter: grayscale(1) opacity(0.85); }
@@ -112,6 +119,7 @@ button, input { font-family: inherit; }
 .operator.required { color: var(--deleted); }
 .op-hint { color: var(--deleted); font-size: 11px; }
 
+.bulkbar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #182233; border-bottom: 1px solid var(--accent); }
 .filebar { background: var(--panel); }
 .path { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sha { margin-left: auto; color: var(--muted); font-family: ui-monospace, monospace; font-size: 12px; }
@@ -194,7 +202,17 @@ button, input { font-family: inherit; }
 }
 .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); }
 .modal-head h3 { margin: 0; font-size: 14px; }
+.modal.small { width: min(540px, 92vw); }
 .modal-body { overflow: auto; padding: 8px 0; }
+.modal-body.pad { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.modal-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--border); }
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); flex: 1; }
+.field input { padding: 7px 9px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--border); color: var(--text); }
+.field input:focus { outline: none; border-color: var(--accent); }
+.field-row { display: flex; gap: 10px; }
+.patch-result { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel-2); font-size: 13px; }
+.patch-result.patched, .patch-result.already { border-color: var(--added); }
+.patch-result.failed { border-color: var(--deleted); }
 .logrow {
   display: grid; grid-template-columns: 90px 190px 100px 1fr 150px; gap: 10px; align-items: center;
   padding: 6px 16px; border-bottom: 1px solid var(--border); font-size: 12px;

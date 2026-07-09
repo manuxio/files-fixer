@@ -13,6 +13,8 @@ fix the **right** side — with every disruptive action backed up and logged to
 - every delete/overwrite/edit → `/evidence/audit.log` (JSONL) + a timestamped backup folder (`before`, `after`, `meta.json`)
 - **multi-user**: all connected browsers update live (Server-Sent Events). Others' fixes/deletes/overwrites/edits appear immediately, and a presence marker shows who is viewing/editing each file — so two operators don't remediate the same thing twice.
 - **Joomla core diff**: for a file that maps onto Joomla core, diff it against pristine upstream source (choose the version) to reveal injected code. Sources are mounted at `/joomla`; versions are auto-discovered.
+- **Patch JCE (com_jce)**: one-click remediation of the vulnerable JCE editor — temporarily drops a token-gated remediation tool + the JCE 2.9.99.8 packages into a site's docroot, drives it over HTTP/HTTPS (optional Basic Auth), then removes them. Records each run in a persisted `patches.csv`, notifies other operators, and shows a `<patched>` label on the site root.
+- **Bulk actions**: multi-select files within one website (checkboxes) to **mark fixed** or **delete** in one go.
 
 ---
 

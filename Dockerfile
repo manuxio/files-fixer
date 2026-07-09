@@ -14,6 +14,7 @@ COPY package.json ./
 RUN npm install --omit=dev
 COPY server/ ./server/
 COPY scripts/ ./scripts/
+COPY assets/ ./assets/
 COPY --from=client /app/client/dist ./client/dist
 EXPOSE 3000
 CMD ["node", "server/index.js"]
