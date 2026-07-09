@@ -216,13 +216,13 @@ export default function App() {
       setFixedOverride((o) => ({ ...o, [file.absolute_path]: value }));
       if (value !== prev) setSummary((s) => {
         if (!s) return s;
-        const delta = value ? 1 : -1;
+        const d = value ? 1 : -1;      // fixed +1 / status -1  (and reverse on unmark)
+        const st = file.status;
+        const adj = (c) => ({ ...c, fixed: Math.max(0, (c.fixed || 0) + d), [st]: Math.max(0, (c[st] || 0) - d) });
         return {
           ...s,
-          totals: { ...s.totals, fixed: Math.max(0, s.totals.fixed + delta) },
-          websites: s.websites.map((w) => (w.name === file.website
-            ? { ...w, counts: { ...w.counts, fixed: Math.max(0, (w.counts.fixed || 0) + delta) } }
-            : w)),
+          totals: adj(s.totals),
+          websites: s.websites.map((w) => (w.name === file.website ? { ...w, counts: adj(w.counts) } : w)),
         };
       });
     } catch (e) { notify(String(e.message || e), 'err'); }

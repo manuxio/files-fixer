@@ -87,17 +87,13 @@ async function computeDiff() {
       const files = [...w.added, ...w.modified, ...w.deleted]
         .map(overlayFixed)
         .sort((a, b) => a.absolute_path.localeCompare(b.absolute_path));
-      return {
-        name: w.name,
-        counts: {
-          added: w.added.length, modified: w.modified.length, deleted: w.deleted.length,
-          unchanged: w.unchanged, fixed: files.filter((f) => f.fixed).length,
-        },
-        files,
-      };
+      // A fixed file counts ONLY as fixed, not in its added/modified/deleted bucket.
+      const counts = { added: 0, modified: 0, deleted: 0, unchanged: w.unchanged, fixed: 0 };
+      for (const f of files) { if (f.fixed) counts.fixed += 1; else counts[f.status] += 1; }
+      return { name: w.name, counts, files };
     })
-    // Only surface websites that actually have differences.
-    .filter((w) => w.counts.added + w.counts.modified + w.counts.deleted > 0)
+    // Surface websites with any change (still show fully-fixed sites).
+    .filter((w) => w.counts.added + w.counts.modified + w.counts.deleted + w.counts.fixed > 0)
     .sort((a, b) => a.name.localeCompare(b.name));
 
   const totals = list.reduce((t, w) => {
@@ -129,9 +125,13 @@ function applyFixed(absPath, val) {
         if (val) { f.fixed = true; f.fixedAt = val.at || ''; f.fixedBy = val.by || ''; }
         else { f.fixed = false; f.fixedAt = null; f.fixedBy = null; }
         if (was !== !!f.fixed) {
-          const delta = f.fixed ? 1 : -1;
-          w.counts.fixed = Math.max(0, (w.counts.fixed || 0) + delta);
-          cache.totals.fixed = Math.max(0, (cache.totals.fixed || 0) + delta);
+          // A fixed file leaves its added/modified/deleted bucket and joins "fixed".
+          const s = f.status;
+          const d = f.fixed ? 1 : -1;
+          w.counts.fixed = Math.max(0, (w.counts.fixed || 0) + d);
+          w.counts[s] = Math.max(0, (w.counts[s] || 0) - d);
+          cache.totals.fixed = Math.max(0, (cache.totals.fixed || 0) + d);
+          cache.totals[s] = Math.max(0, (cache.totals[s] || 0) - d);
         }
         return;
       }

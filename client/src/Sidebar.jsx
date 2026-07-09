@@ -96,7 +96,7 @@ export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilte
     if (!summary) return [];
     return summary.websites.filter((w) =>
       statusFilter === 'all'
-        ? (w.counts.added + w.counts.modified + w.counts.deleted) > 0
+        ? (w.counts.added + w.counts.modified + w.counts.deleted + (w.counts.fixed || 0)) > 0
         : w.counts[statusFilter] > 0);
   }, [summary, statusFilter]);
 
