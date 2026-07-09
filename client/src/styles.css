@@ -224,6 +224,14 @@ button, input { font-family: inherit; }
 .patch-result { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel-2); font-size: 13px; }
 .patch-result.patched, .patch-result.already { border-color: var(--added); }
 .patch-result.failed { border-color: var(--deleted); }
+.patch-result .note { margin-top: 6px; }
+.patch-result.failed .note { color: #ffb4ae; }
+.patch-result .mono, .mono { font-family: ui-monospace, monospace; font-size: 11px; }
+.patch-result .small, .small { font-size: 11px; }
+.patch-result .phases { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.phase-chip { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); }
+.phase-chip.ok { border-color: var(--added); color: var(--added); }
+.phase-chip.bad { border-color: var(--deleted); color: var(--deleted); }
 .logrow {
   display: grid; grid-template-columns: 90px 190px 100px 1fr 150px; gap: 10px; align-items: center;
   padding: 6px 16px; border-bottom: 1px solid var(--border); font-size: 12px;

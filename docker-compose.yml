@@ -24,7 +24,9 @@ services:
       - ./sample/right:/right
       # evidence holds the CSVs, audit.log and backups — writable
       - ./sample/evidence:/evidence
-      # pristine Joomla sources — read-only; replace with your own versions
-      - ./sample/joomla:/joomla:ro
+      # pristine Joomla sources — read-only. Point at your own dir with
+      #   JOOMLA_SRC=/path/to/joomla-sources docker compose up -d
+      # (folder must hold one subfolder per version, e.g. Joomla-3.9.21/)
+      - ${JOOMLA_SRC:-./sample/joomla}:/joomla:ro
     # For a real investigation, replace the ./sample/* host paths above with
     # your evidence/data mounts. left stays :ro, right and evidence stay writable.

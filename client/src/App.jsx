@@ -318,7 +318,7 @@ export default function App() {
         basicUser: patchForm.basicUser || undefined, basicPass: patchForm.basicPass || undefined,
         operator,
       });
-      setPatchResult(r.record);
+      setPatchResult({ ...r.record, detail: r.detail });
       setPatchedMap((m) => ({ ...m, [patchTarget]: { status: r.record.status, at: r.record.timestamp, jce: r.record.jce_after } }));
       const good = r.record.status === 'patched' || r.record.status === 'already';
       notify(`JCE ${r.record.status}: ${patchTarget}`, good ? 'ok' : 'err');
@@ -524,11 +524,22 @@ function PatchModal({ website, form, setForm, busy, result, onRun, onClose }) {
           </div>
           {result && (
             <div className={`patch-result ${result.status}`}>
-              <b>{result.status}</b>
-              {result.package ? ` · ${result.package}` : ''}
-              {result.jce_before || result.jce_after ? ` · JCE ${result.jce_before || '?'} → ${result.jce_after || '?'}` : ''}
-              {result.php_version ? ` · PHP ${result.php_version}` : ''}
-              {result.note ? <div className="muted">{result.note}</div> : null}
+              <div>
+                <b>{result.status}</b>
+                {result.package ? ` · ${result.package}` : ''}
+                {result.jce_before || result.jce_after ? ` · JCE ${result.jce_before || '?'} → ${result.jce_after || '?'}` : ''}
+                {result.php_version ? ` · PHP ${result.php_version}` : ''}
+              </div>
+              {result.note ? <div className="note">{result.note}</div> : null}
+              {result.detail && result.detail.dropper_url ? <div className="mono muted">tried: {result.detail.dropper_url}</div> : null}
+              {result.detail && result.detail.phases ? (
+                <div className="phases">
+                  {['preflight', 'install', 'verify'].map((k) => (result.detail.phases[k]
+                    ? <span key={k} className={`phase-chip ${result.detail.phases[k].json ? 'ok' : 'bad'}`}>{k} · HTTP {result.detail.phases[k].http_status ?? '—'}</span>
+                    : null))}
+                </div>
+              ) : null}
+              <div className="muted small">Full server log: <code>docker compose logs -f</code></div>
             </div>
           )}
         </div>

@@ -18,6 +18,6 @@ services:
       - ./sample/left:/left:ro
       - ./sample/right:/right
       - ./sample/evidence:/evidence
-      - ./sample/joomla:/joomla:ro
+      - ${JOOMLA_SRC:-./sample/joomla}:/joomla:ro
     # For a real investigation, replace the ./sample/* host paths with your
     # evidence/data mounts. Keep left read-only; right and evidence writable.

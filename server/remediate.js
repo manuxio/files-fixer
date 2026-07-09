@@ -49,13 +49,51 @@ function httpJson(url, { headers = {}, body = null, timeoutMs = 60000 } = {}) {
   });
 }
 
+const log = (...a) => console.log('[patch]', ...a);
+const logErr = (...a) => console.error('[patch]', ...a);
+
+// Human explanation for a non-JSON HTTP response from the dropper URL.
+function hintForStatus(status, snippet) {
+  const s = String(snippet || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  if (status === 401) return 'HTTP 401 — Basic Auth required, or wrong username/password.';
+  if (status === 403) return 'HTTP 403 — blocked by the server/WAF/mod_security before the dropper ran.';
+  if (status === 404) return 'HTTP 404 — dropper not found at that URL. The Base URL must point at the site DOCUMENT ROOT (where index.php lives), not a parent/subfolder.';
+  if (status === 500) return 'HTTP 500 — the dropper hit a PHP fatal. Check the site PHP error log.';
+  if (status === 502 || status === 504) return `HTTP ${status} — upstream/proxy error; the PHP backend is down or too slow.`;
+  if (status === 503) return 'HTTP 503 — site unavailable: usually Joomla is in OFFLINE/maintenance mode (it serves 503 to everyone), or a proxy/backend is down. The dropper never executed — bring the site online (or fix the proxy) and retry.';
+  if (status === 200) return `HTTP 200 but not JSON — reached a page that is not the dropper. PHP may not be executing (.php served as text), or a WAF/login/HTML page came back. Body: "${s}"`;
+  return `HTTP ${status}, non-JSON. Body: "${s}"`;
+}
+function hintForError(e) {
+  const m = String((e && e.code) || (e && e.message) || e);
+  if (/ENOTFOUND|EAI_AGAIN/i.test(m)) return 'DNS — the host could not be resolved from inside the container (check the Base URL host / the container can reach it).';
+  if (/ECONNREFUSED/i.test(m)) return 'Connection refused — wrong host/port, or the site is down.';
+  if (/ETIMEDOUT|timed out/i.test(m)) return 'Timed out — host slow/unreachable, or the container has no network route to it.';
+  if (/ECONNRESET/i.test(m)) return 'Connection reset — a proxy/WAF dropped the connection.';
+  return null;
+}
+// Return the dropper's parsed JSON, or throw a diagnostic Error carrying `.hint`.
+function expectJson(resp, phase) {
+  if (resp.json) {
+    if (resp.json.error) {
+      const e = new Error(`${phase}: dropper refused: ${resp.json.error}`);
+      e.hint = `The dropper executed but returned "${resp.json.error}". "forbidden" = token mismatch; "not templated"/"expired" = token/expiry issue; otherwise see the dropper output in details.`;
+      throw e;
+    }
+    return resp.json;
+  }
+  const e = new Error(`${phase}: HTTP ${resp.status}, non-JSON`);
+  e.hint = hintForStatus(resp.status, resp.bodySnippet);
+  throw e;
+}
+
 function call(baseUrl, dropperName, params, { basicUser, basicPass, timeout }) {
   const base = baseUrl.endsWith('/') ? baseUrl : baseUrl + '/';
   const url = new URL(dropperName, base);
   const body = new URLSearchParams(params).toString();
   const headers = {};
   if (basicUser) headers.Authorization = 'Basic ' + Buffer.from(`${basicUser}:${basicPass || ''}`).toString('base64');
-  return httpJson(url, { headers, body, timeoutMs: timeout });
+  return httpJson(url, { headers, body, timeoutMs: timeout }).then((r) => ({ ...r, url: url.origin + url.pathname }));
 }
 
 async function patchWebsite({ website, baseUrl, basicUser, basicPass, operator }) {
@@ -92,29 +130,42 @@ async function patchWebsite({ website, baseUrl, basicUser, basicPass, operator }
   };
   const finish = () => ({ record, detail });
 
+  const baseSlash = baseUrl.endsWith('/') ? baseUrl : baseUrl + '/';
+  const su = new URL(dropperName, baseSlash);
+  detail.dropper_url = su.origin + su.pathname;
+  log(`${website}: START base=${baseUrl} docroot=${docroot} operator=${operator || '(none)'} url=${detail.dropper_url}`);
+
   try {
     await fsp.writeFile(path.join(docroot, dropperName), templated);
     deployed.push(path.join(docroot, dropperName));
     await fsp.copyFile(fullSrc, path.join(docroot, fullName)); deployed.push(path.join(docroot, fullName));
     await fsp.copyFile(patchSrc, path.join(docroot, patchName)); deployed.push(path.join(docroot, patchName));
+    log(`${website}: deployed dropper + ${fullName} + ${patchName}`);
 
     const auth = { basicUser, basicPass };
 
     // 1. preflight
+    log(`${website}: preflight POST ${detail.dropper_url}`);
     const pf = await call(baseUrl, dropperName, { token, mode: 'preflight', run_id: runId }, { ...auth, timeout: 60000 });
-    detail.phases.preflight = pf.json || { http_status: pf.status, body: pf.bodySnippet };
-    if (!pf.json) throw new Error(`preflight: HTTP ${pf.status}, non-JSON (${(pf.bodySnippet || '').slice(0, 120)})`);
-    if (pf.json.error) throw new Error('preflight rejected: ' + pf.json.error);
-    const pfd = pf.json.preflight || {};
-    record.php_version = String(pf.json.php_version || '');
+    detail.phases.preflight = { url: pf.url, http_status: pf.status, json: pf.json || undefined, body: pf.json ? undefined : pf.bodySnippet };
+    log(`${website}: preflight <- HTTP ${pf.status} ${pf.json ? 'JSON' : 'NON-JSON'}`);
+    const pj = expectJson(pf, 'preflight');
+    const pfd = pj.preflight || {};
+    record.php_version = String(pj.php_version || '');
     record.joomla_version = pfd.joomla_version || '';
     record.jce_before = (pfd.jce && pfd.jce.version) || '';
     const major = pfd.joomla_major || 0;
-    if (major < 3) throw new Error('target does not look like Joomla (major < 3)');
+    log(`${website}: php=${record.php_version || '?'} joomla=${record.joomla_version || '?'}(major ${major}) jce_before=${record.jce_before || '(none)'} update_needed=${pfd.jce ? pfd.jce.update_needed : '?'}`);
+    if (major < 3) {
+      const e = new Error('target does not look like Joomla (major < 3)');
+      e.hint = 'No Joomla detected at this docroot (administrator/manifests/files/joomla.xml missing). Check the Base URL points at the Joomla site root.';
+      throw e;
+    }
 
     if (pfd.jce && pfd.jce.installed && pfd.jce.update_needed === false) {
       record.status = 'already'; record.jce_after = record.jce_before; record.package = '(none)';
       record.note = 'JCE already >= ' + config.jceTarget;
+      log(`${website}: ALREADY up-to-date (${record.jce_before})`);
       return finish();
     }
 
@@ -122,18 +173,25 @@ async function patchWebsite({ website, baseUrl, basicUser, basicPass, operator }
     const useFull = !phpLt(record.php_version || '0', '7.4');
     const pkg = useFull ? fullName : patchName;
     record.package = pkg;
+    log(`${website}: chose ${pkg} (${useFull ? 'full upgrade, PHP>=7.4' : 'legacy file-patch, PHP<7.4'})`);
 
     // 3. install
+    log(`${website}: install POST pkg=${pkg} (up to 300s)`);
     const ins = await call(baseUrl, dropperName, { token, mode: 'install', pkg, run_id: runId }, { ...auth, timeout: 300000 });
-    detail.phases.install = ins.json || { http_status: ins.status, body: ins.bodySnippet };
-    if (!ins.json) throw new Error(`install: HTTP ${ins.status}, non-JSON (${(ins.bodySnippet || '').slice(0, 120)})`);
-    if (ins.json.error) throw new Error('install rejected: ' + ins.json.error);
+    detail.phases.install = { url: ins.url, http_status: ins.status, json: ins.json || undefined, body: ins.json ? undefined : ins.bodySnippet };
+    log(`${website}: install <- HTTP ${ins.status} ${ins.json ? 'JSON' : 'NON-JSON'}`);
+    const ij = expectJson(ins, 'install');
+    const insInfo = ij.install || {};
+    if (Array.isArray(insInfo.messages) && insInfo.messages.length) log(`${website}: install messages: ${insInfo.messages.join(' | ')}`);
+    if (Array.isArray(insInfo.errors) && insInfo.errors.length) logErr(`${website}: install errors: ${insInfo.errors.join(' | ')}`);
 
     // 4. verify
+    log(`${website}: verify POST`);
     const vf = await call(baseUrl, dropperName, { token, mode: 'verify', run_id: runId }, { ...auth, timeout: 60000 });
-    detail.phases.verify = vf.json || { http_status: vf.status, body: vf.bodySnippet };
+    detail.phases.verify = { url: vf.url, http_status: vf.status, json: vf.json || undefined, body: vf.json ? undefined : vf.bodySnippet };
+    log(`${website}: verify <- HTTP ${vf.status} ${vf.json ? 'JSON' : 'NON-JSON'}`);
     const v = vf.json && vf.json.verify;
-    record.jce_after = (v && v.jce_version) || (ins.json.install && ins.json.install.after) || '';
+    record.jce_after = (v && v.jce_version) || insInfo.after || '';
     const upToDate = !!(v && v.up_to_date);
     const vulnClosed = !!(v && v.vuln_closed);
     if (upToDate || (!useFull && vulnClosed)) {
@@ -141,17 +199,25 @@ async function patchWebsite({ website, baseUrl, basicUser, basicPass, operator }
       record.note = useFull ? ('upgraded to ' + (record.jce_after || config.jceTarget)) : 'legacy security-patch applied (vuln closed)';
     } else {
       record.status = 'failed';
-      record.note = 'verify did not confirm remediation: ' + JSON.stringify(v || (vf.json && vf.json.error) || vf.bodySnippet || 'no verify');
+      record.note = 'verify did not confirm remediation (jce_after=' + (record.jce_after || '?') + ')';
+      detail.hint = 'Install ran but the site is still not up-to-date. Check the install messages/errors above and the install phase in details.';
+      if (detail.hint) record.note += ' — ' + detail.hint;
     }
+    log(`${website}: DONE status=${record.status} jce ${record.jce_before || '?'} -> ${record.jce_after || '?'}`);
     return finish();
   } catch (e) {
     record.status = 'failed';
     record.note = String(e.message || e);
+    detail.hint = e.hint || hintForError(e) || detail.hint || null;
+    if (detail.hint) record.note += ' — ' + detail.hint;
     detail.error = record.note;
+    logErr(`${website}: FAILED — ${record.note}`);
+    if (e && e.stack && !e.hint) logErr(e.stack);
     return finish();
   } finally {
     for (const f of deployed) { try { await fsp.rm(f, { force: true }); } catch { /* best effort */ } }
     detail.cleaned = deployed;
+    log(`${website}: cleaned ${deployed.length} deployed file(s)`);
   }
 }
 

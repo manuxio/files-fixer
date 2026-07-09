@@ -25,7 +25,12 @@ function requireOperator(req) {
   return name.slice(0, 120);
 }
 
-const fail = (res, code, e) => res.status((e && e.status) || code).json({ error: String((e && e.message) || e) });
+const fail = (res, code, e) => {
+  const status = (e && e.status) || code;
+  const msg = String((e && e.message) || e);
+  console.error(`[api] ${status} ${msg}`); // every error goes to the container log
+  return res.status(status).json({ error: msg });
+};
 
 const originOf = (req) => (req.body && req.body.clientId) || null;
 
@@ -220,6 +225,7 @@ app.post('/api/patch-jce', async (req, res) => {
     const baseUrl = req.body && req.body.baseUrl;
     if (!website) return fail(res, 400, 'website required');
     if (!baseUrl) return fail(res, 400, 'baseUrl required');
+    console.log(`[api] patch-jce request: website=${website} baseUrl=${baseUrl} operator=${actor} basicAuth=${req.body.basicUser ? 'yes' : 'no'}`);
     const { record, detail } = await remediate.patchWebsite({
       website, baseUrl,
       basicUser: req.body.basicUser, basicPass: req.body.basicPass,
