@@ -11,7 +11,10 @@ function matches(file, website, q) {
 }
 
 export function Sidebar({ data, query, setQuery, statusFilter, setStatusFilter, selected, onSelect, handled }) {
-  const [collapsed, setCollapsed] = useState({});
+  // Websites are collapsed by default; toggling flips an entry in `expanded`.
+  // While a search/filter is active we force-expand so matches stay visible.
+  const [expanded, setExpanded] = useState({});
+  const filtering = query.trim() !== '' || statusFilter !== 'all';
 
   const websites = useMemo(() => {
     if (!data) return [];
@@ -50,10 +53,10 @@ export function Sidebar({ data, query, setQuery, statusFilter, setStatusFilter, 
 
       <div className="tree">
         {websites.map((w) => {
-          const isCollapsed = collapsed[w.name];
+          const isCollapsed = filtering ? false : !expanded[w.name];
           return (
             <div className="site" key={w.name}>
-              <div className="site-head" onClick={() => setCollapsed((c) => ({ ...c, [w.name]: !c[w.name] }))}>
+              <div className="site-head" onClick={() => setExpanded((e) => ({ ...e, [w.name]: !e[w.name] }))}>
                 <span className="caret">{isCollapsed ? '▸' : '▾'}</span>
                 <span className="site-name" title={w.name}>{w.name}</span>
                 <span className="site-counts">

@@ -113,9 +113,15 @@ button, input { font-family: inherit; }
 .btn.ghost { background: transparent; }
 
 .viewer { flex: 1; min-height: 0; overflow: hidden; position: relative; }
-.cm-host { height: 100%; overflow: auto; }
+.cm-host { height: 100%; overflow: hidden; }
 .cm-host .cm-editor { height: 100%; }
-.cm-host.merge .cm-mergeView, .cm-host.merge .cm-mergeViewEditors { height: 100%; }
+.cm-host .cm-scroller { overflow: auto; }
+/* diff view: constrain the whole pane chain so each editor scrolls internally.
+   MergeView keeps the two panes scrolled in sync; line-wrapping is on so there
+   is no horizontal drift between them. */
+.cm-host.merge .cm-mergeView,
+.cm-host.merge .cm-mergeViewEditors,
+.cm-host.merge .cm-mergeViewEditor { height: 100%; min-height: 0; }
 .loading, .placeholder { padding: 24px; color: var(--muted); }
 .placeholder h2 { color: var(--text); font-weight: 600; }
 
