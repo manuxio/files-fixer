@@ -160,8 +160,15 @@ button, input { font-family: inherit; }
    the two panes scroll together / in sync. We only need to bound it to the
    available height so that scroll engages. Do NOT force editor heights here —
    that collapses the panes and kills scrolling. */
-.cm-host.merge { overflow: hidden; }
-.cm-host.merge .cm-mergeView { height: 100%; }
+.cm-host.merge { overflow: hidden; display: flex; }
+.cm-diff-editors { flex: 1; min-width: 0; height: 100%; overflow: hidden; }
+.cm-diff-editors .cm-mergeView { height: 100%; }
+/* change-overview mini-map */
+.cm-diff-overview { position: relative; flex: 0 0 14px; width: 14px; background: var(--panel); border-left: 1px solid var(--border); cursor: pointer; }
+.cm-diff-overview .tick { position: absolute; left: 2px; right: 2px; height: 2px; border-radius: 1px; }
+.cm-diff-overview .tick.a { background: var(--deleted); }
+.cm-diff-overview .tick.b { background: var(--added); }
+.cm-diff-overview .viewport { position: absolute; left: 0; right: 0; background: rgba(74, 158, 255, 0.15); border-top: 1px solid var(--accent); border-bottom: 1px solid var(--accent); pointer-events: none; }
 
 /* The @codemirror/merge base theme highlights changes at ~8% opacity, which is
    nearly invisible on a dark editor. Repaint them with strong colours:
