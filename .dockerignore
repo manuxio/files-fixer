@@ -1,0 +1,11 @@
+node_modules
+client/node_modules
+client/dist
+sample
+evidence
+left
+right
+*.csv
+.git
+.env
+npm-debug.log*

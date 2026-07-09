@@ -1,0 +1,26 @@
+services:
+  files-fixer:
+    build: .
+    ports:
+      # host:container — host port overridable via HOST_PORT (3000 was busy locally)
+      - "${HOST_PORT:-3001}:3000"
+    environment:
+      PORT: "3000"
+      # Where the real files live inside the container:
+      LEFT_ROOT: /left
+      RIGHT_ROOT: /right
+      EVIDENCE_ROOT: /evidence
+      # Checksum manifests:
+      LEFT_CSV: /evidence/left.csv
+      RIGHT_CSV: /evidence/right.csv
+      # Prefix present in every CSV absolute_path (mapped onto the mounts):
+      CSV_PATH_PREFIX: /mnt/data
+    volumes:
+      # left is the trusted source — mount read-only so it can never be touched
+      - ./sample/left:/left:ro
+      # right is what we remediate — must be writable
+      - ./sample/right:/right
+      # evidence holds the CSVs, audit.log and backups — writable
+      - ./sample/evidence:/evidence
+    # For a real investigation, replace the ./sample/* host paths above with
+    # your evidence/data mounts. left stays :ro, right and evidence stay writable.

@@ -1,0 +1,21 @@
+services:
+  files-fixer:
+    # Runs the prebuilt image published by GitHub Actions (no local build).
+    image: ghcr.io/manuxio/files-fixer:latest
+    pull_policy: always
+    ports:
+      - "${HOST_PORT:-3001}:3000"
+    environment:
+      PORT: "3000"
+      LEFT_ROOT: /left
+      RIGHT_ROOT: /right
+      EVIDENCE_ROOT: /evidence
+      LEFT_CSV: /evidence/left.csv
+      RIGHT_CSV: /evidence/right.csv
+      CSV_PATH_PREFIX: /mnt/data
+    volumes:
+      - ./sample/left:/left:ro
+      - ./sample/right:/right
+      - ./sample/evidence:/evidence
+    # For a real investigation, replace the ./sample/* host paths with your
+    # evidence/data mounts. Keep left read-only; right and evidence writable.

@@ -1,0 +1,10 @@
+node_modules/
+client/node_modules/
+client/dist/
+.env
+*.log
+# generated / large evidence data
+/left.csv
+/right.csv
+sample/evidence/backups/
+sample/evidence/audit.log

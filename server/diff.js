@@ -1,0 +1,106 @@
+'use strict';
+const fs = require('fs');
+const { parse } = require('csv-parse');
+const config = require('./config');
+const { websiteOf } = require('./paths');
+
+let cache = null;      // last computed result
+let building = null;   // in-flight promise (de-dupes concurrent requests)
+
+function row(r) {
+  const ap = r.absolute_path;
+  if (!ap) return null;
+  return {
+    filename: r.filename || ap.split('/').pop(),
+    last_modified: r.last_modified || '',
+    size_bytes: r.size_bytes !== undefined && r.size_bytes !== '' ? Number(r.size_bytes) : null,
+    sha256: (r.sha256 || '').toLowerCase(),
+  };
+}
+
+function parser(file) {
+  return fs.createReadStream(file).pipe(parse({
+    columns: true,
+    skip_empty_lines: true,
+    relax_column_count: true,
+    trim: true,
+    bom: true,
+  }));
+}
+
+// Streams both CSVs. The full left manifest is held in a Map; the right side is
+// streamed and diffed on the fly, deleting matches from the left Map so that
+// whatever remains is "deleted on the right". Peak memory ~= one manifest.
+async function computeDiff() {
+  const left = new Map();
+  for await (const r of parser(config.leftCsv)) {
+    if (r.absolute_path) left.set(r.absolute_path, row(r));
+  }
+
+  const websites = new Map();
+  const bucket = (name) => {
+    let w = websites.get(name);
+    if (!w) { w = { name, added: [], modified: [], deleted: [], unchanged: 0 }; websites.set(name, w); }
+    return w;
+  };
+
+  for await (const r of parser(config.rightCsv)) {
+    const ap = r.absolute_path;
+    if (!ap) continue;
+    const right = row(r);
+    const name = websiteOf(ap);
+    const w = bucket(name);
+    const l = left.get(ap);
+    if (!l) {
+      w.added.push({ absolute_path: ap, filename: right.filename, website: name, status: 'added', right });
+    } else {
+      if (l.sha256 !== right.sha256) {
+        w.modified.push({ absolute_path: ap, filename: right.filename, website: name, status: 'modified', left: l, right });
+      } else {
+        w.unchanged++;
+      }
+      left.delete(ap);
+    }
+  }
+
+  for (const [ap, l] of left) {
+    const name = websiteOf(ap);
+    bucket(name).deleted.push({ absolute_path: ap, filename: l.filename, website: name, status: 'deleted', left: l });
+  }
+
+  const list = [...websites.values()]
+    .map((w) => ({
+      name: w.name,
+      counts: { added: w.added.length, modified: w.modified.length, deleted: w.deleted.length, unchanged: w.unchanged },
+      files: [...w.added, ...w.modified, ...w.deleted].sort((a, b) => a.absolute_path.localeCompare(b.absolute_path)),
+    }))
+    // Only surface websites that actually have differences.
+    .filter((w) => w.counts.added + w.counts.modified + w.counts.deleted > 0)
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const totals = list.reduce((t, w) => {
+    t.added += w.counts.added; t.modified += w.counts.modified;
+    t.deleted += w.counts.deleted; t.unchanged += w.counts.unchanged;
+    t.websites += 1; return t;
+  }, { websites: 0, added: 0, modified: 0, deleted: 0, unchanged: 0 });
+
+  return {
+    generatedAt: new Date().toISOString(),
+    prefix: config.csvPrefix,
+    leftCsv: config.leftCsv,
+    rightCsv: config.rightCsv,
+    totals,
+    websites: list,
+  };
+}
+
+async function getDiff(refresh = false) {
+  if (cache && !refresh) return cache;
+  if (building) return building;
+  building = computeDiff()
+    .then((res) => { cache = res; building = null; return res; })
+    .catch((e) => { building = null; throw e; });
+  return building;
+}
+
+module.exports = { getDiff };
