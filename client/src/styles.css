@@ -163,6 +163,10 @@ button, input { font-family: inherit; }
 .cm-host.merge { overflow: hidden; display: flex; }
 .cm-diff-editors { flex: 1; min-width: 0; height: 100%; overflow: hidden; }
 .cm-diff-editors .cm-mergeView { height: 100%; }
+/* hide the merge view's own scrollbar — the mini-map is the scroll affordance
+   (wheel + click-to-jump), so we don't show a native scrollbar next to it */
+.cm-diff-editors .cm-mergeView { scrollbar-width: none; }
+.cm-diff-editors .cm-mergeView::-webkit-scrollbar { width: 0; height: 0; display: none; }
 /* change-overview mini-map */
 .cm-diff-overview { position: relative; flex: 0 0 14px; width: 14px; background: var(--panel); border-left: 1px solid var(--border); cursor: pointer; }
 .cm-diff-overview .tick { position: absolute; left: 2px; right: 2px; height: 2px; border-radius: 1px; }

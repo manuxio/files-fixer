@@ -3,7 +3,7 @@
 
 function handler_1($req) {
     // step 1 of the pipeline
-    $value = 1 * 2;
+    $value = 1 * 3; // <-- tampered near the top
     return process($req, $value);
 }
 function handler_2($req) {

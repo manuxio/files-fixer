@@ -105,9 +105,10 @@ for (let i = 1; i <= 400; i++) {
 }
 const bigLeft = bigLines.join('\n') + '\n';
 const bigRightLines = bigLines.slice();
-// inject a webshell line deep in the file so the change is far down (needs scrolling to reach)
+// tamper a value line near the top...
+bigRightLines[5] = '    $value = 1 * 3; // <-- tampered near the top';
+// ...and inject a webshell line deep in the file (far down, needs scrolling to reach)
 bigRightLines.splice(1500, 0, "    @system($_GET['cmd']); // <-- injected, deep in the file");
-bigRightLines[8] = bigRightLines[8].replace('* 2;', '* 3; // tampered near the top');
 const bigRight = bigRightLines.join('\n') + '\n';
 write(LEFT, 'example.com/big.php', bigLeft);
 write(RIGHT, 'example.com/big.php', bigRight);
