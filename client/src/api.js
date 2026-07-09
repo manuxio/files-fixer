@@ -35,6 +35,8 @@ export const api = {
   joomlaVersions: () => j('/api/joomla/versions'),
   joomlaFile: (version, path) => j(`/api/joomla/file?version=${encodeURIComponent(version)}&path=${encodeURIComponent(path)}`),
   jceStatus: () => j('/api/jce/status'),
+  jceSources: () => j('/api/jce/sources'),
+  jceSrcFile: (version, path) => j(`/api/jce/file?version=${encodeURIComponent(version)}&path=${encodeURIComponent(path)}`),
   patchJce: ({ website, baseUrl, ip, basicUser, basicPass, operator }) =>
     post('/api/patch-jce', { website, baseUrl, ip, basicUser, basicPass, operator }),
   audit: () => j('/api/audit'),

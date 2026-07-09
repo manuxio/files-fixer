@@ -12,6 +12,7 @@ const events = require('./events');
 const joomla = require('./joomla');
 const patches = require('./patches');
 const remediate = require('./remediate');
+const jcesrc = require('./jcesrc');
 
 const app = express();
 app.use(express.json({ limit: '25mb' }));
@@ -209,6 +210,23 @@ app.get('/api/joomla/file', async (req, res) => {
 
 // JCE remediation availability (are the bundled dropper + packages present?).
 app.get('/api/jce/status', (req, res) => res.json(remediate.assetStatus()));
+
+// Pristine JCE sources to diff against (the packages the dropper installs).
+app.get('/api/jce/sources', (req, res) => {
+  try { res.json({ sources: jcesrc.listSources(), target: config.jceTarget }); }
+  catch (e) { fail(res, 500, e); }
+});
+
+// Pristine JCE file matching a website path, for the chosen source package.
+app.get('/api/jce/file', (req, res) => {
+  try {
+    const version = req.query.version;
+    const abs = req.query.path;
+    if (!version) return fail(res, 400, 'version required');
+    if (!abs) return fail(res, 400, 'path required');
+    res.json(jcesrc.findFile(version, abs));
+  } catch (e) { fail(res, e.status || 400, e); }
+});
 
 // Latest patch record per website + full history.
 app.get('/api/patches', (req, res) => {

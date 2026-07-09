@@ -51,6 +51,11 @@ export default function App() {
   useEffect(() => { if (joomlaVersion) localStorage.setItem('ff.joomlaVersion', joomlaVersion); }, [joomlaVersion]);
   const [joomla, setJoomla] = useState(null); // pristine-file lookup for the selected file
 
+  const [jceSources, setJceSources] = useState([]);
+  const [jceSourceVersion, setJceSourceVersion] = useState(() => localStorage.getItem('ff.jceSourceVersion') || '');
+  useEffect(() => { if (jceSourceVersion) localStorage.setItem('ff.jceSourceVersion', jceSourceVersion); }, [jceSourceVersion]);
+  const [jceSrc, setJceSrc] = useState(null); // pristine JCE-file lookup for the selected file
+
   const [jceAvailable, setJceAvailable] = useState(false);
   const [patchedMap, setPatchedMap] = useState({});   // website -> { status, at, jce }
   const [patchTarget, setPatchTarget] = useState(null); // website name -> opens the dialog
@@ -143,6 +148,28 @@ export default function App() {
       })
       .catch(() => {});
   }, []);
+
+  // discover pristine JCE sources (the packages the dropper installs)
+  useEffect(() => {
+    api.jceSources()
+      .then((r) => {
+        const s = r.sources || [];
+        setJceSources(s);
+        setJceSourceVersion((cur) => cur || (s[0] ? s[0].id : ''));
+      })
+      .catch(() => {});
+  }, []);
+
+  // look up the pristine JCE file when in JCE-compare mode
+  useEffect(() => {
+    if (mode !== 'jce' || !selected || !jceSourceVersion) return undefined;
+    let alive = true;
+    setJceSrc({ loading: true });
+    api.jceSrcFile(jceSourceVersion, selected.absolute_path)
+      .then((r) => { if (alive) setJceSrc({ loading: false, ...r }); })
+      .catch((e) => { if (alive) setJceSrc({ loading: false, error: String(e.message || e) }); });
+    return () => { alive = false; };
+  }, [mode, selected, jceSourceVersion, version]);
 
   // look up the pristine core file when in Joomla-compare mode
   useEffect(() => {
@@ -454,6 +481,19 @@ export default function App() {
                     </select>
                   </>
                 )}
+                {jceSources.length > 0 && (
+                  <>
+                    <button
+                      className={`btn ${mode === 'jce' ? 'active' : ''}`}
+                      disabled={!(hasRight || hasLeft)}
+                      title="Diff the current file against the pristine JCE package the dropper installs"
+                      onClick={() => setMode('jce')}
+                    >vs JCE</button>
+                    <select className="jversion" value={jceSourceVersion} onChange={(e) => setJceSourceVersion(e.target.value)} title="JCE source to compare against">
+                      {jceSources.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+                    </select>
+                  </>
+                )}
               </div>
               <div className="spacer" />
               <button
@@ -494,6 +534,16 @@ export default function App() {
                   path={selected.absolute_path}
                   version={joomlaVersion}
                   docKey={`${selected.absolute_path}::joomla::${joomlaVersion}::${version}`}
+                />
+              )}
+              {!loadingFile && mode === 'jce' && (
+                <JceBody
+                  jce={jceSrc}
+                  current={hasRight ? contents.right : (hasLeft ? contents.left : null)}
+                  currentSide={hasRight ? 'right' : 'left'}
+                  path={selected.absolute_path}
+                  version={jceSourceVersion}
+                  docKey={`${selected.absolute_path}::jce::${jceSourceVersion}::${version}`}
                 />
               )}
             </div>
@@ -597,6 +647,23 @@ function JoomlaBody({ joomla, current, currentSide, path, version, docKey }) {
         {(!current || !current.exists) && ' (current side missing — showing empty)'}
       </div>
       <div className="joomla-diff"><DiffView left={joomla.content} right={cur} path={path} docKey={docKey} /></div>
+    </div>
+  );
+}
+
+function JceBody({ jce, current, currentSide, path, version, docKey }) {
+  if (!jce || jce.loading) return <div className="loading">looking up pristine JCE source…</div>;
+  if (jce.error) return <div className="loading">JCE lookup failed: {jce.error}</div>;
+  if (!jce.exists) return <div className="loading">Not part of the JCE package — this path doesn’t match a file in the selected JCE source (not a JCE file, or renamed).</div>;
+  if (jce.tooLarge) return <div className="loading">pristine file too large to display ({jce.size} bytes).</div>;
+  const cur = current && current.exists ? current.content : '';
+  return (
+    <div className="joomla-wrap">
+      <div className="joomla-note">
+        pristine JCE <code>{jce.jcePath}</code> &nbsp;→&nbsp; current <b>{currentSide}</b> file
+        {(!current || !current.exists) && ' (current side missing — showing empty)'}
+      </div>
+      <div className="joomla-diff"><DiffView left={jce.content} right={cur} path={path} docKey={docKey} /></div>
     </div>
   );
 }
