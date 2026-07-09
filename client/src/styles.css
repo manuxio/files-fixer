@@ -82,8 +82,8 @@ button, input { font-family: inherit; }
 .file.fixed .fname { text-decoration: line-through; color: var(--muted); }
 .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .tick { color: var(--added); }
-.viewer { font-size: 11px; filter: grayscale(1) opacity(0.85); }
-.viewer.editing { filter: none; }
+.viewer-badge { font-size: 11px; filter: grayscale(1) opacity(0.85); }
+.viewer-badge.on { filter: none; }
 .empty { padding: 20px; color: var(--muted); }
 
 .badge {

@@ -17,7 +17,7 @@ function FileRow({ f, selected, onSelect, isFixed, viewers }) {
       <span className={`badge ${f.status}`}>{STATUS_LABEL[f.status]}</span>
       <span className="fname">{f.filename}</span>
       {viewers && viewers.length > 0 && (
-        <span className={`viewer ${editing ? 'editing' : ''}`} title={'here now: ' + viewers.map((v) => `${v.operator || 'anon'}${v.mode === 'edit' ? ' (editing)' : ''}`).join(', ')}>👤</span>
+        <span className={`viewer-badge ${editing ? 'on' : ''}`} title={'here now: ' + viewers.map((v) => `${v.operator || 'anon'}${v.mode === 'edit' ? ' (editing)' : ''}`).join(', ')}>👤</span>
       )}
       {fx && <span className="tick">✔</span>}
     </div>
