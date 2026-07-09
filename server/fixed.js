@@ -11,6 +11,7 @@
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
+const crypto = require('crypto');
 const { parse } = require('csv-parse');
 const config = require('./config');
 
@@ -37,17 +38,28 @@ async function replace(tmp, dest) {
 
 async function writeSidecar() {
   await fsp.mkdir(path.dirname(SIDECAR), { recursive: true });
-  const tmp = SIDECAR + '.tmp';
+  // Unique temp name so concurrent writes never collide on the same file.
+  const tmp = SIDECAR + '.' + crypto.randomBytes(4).toString('hex') + '.tmp';
   await fsp.writeFile(tmp, JSON.stringify(snapshot(), null, 2));
   await replace(tmp, SIDECAR);
+}
+
+// Serialize sidecar writes: bulk actions fire many /api/fixed calls at once, and
+// concurrent temp-file writes/renames would otherwise race (only the first would
+// land, the rest erroring). Each write persists the full current snapshot.
+let writeChain = Promise.resolve();
+function persist() {
+  writeChain = writeChain.then(writeSidecar, writeSidecar).catch((e) => console.error('[fixed] sidecar write failed:', e.message));
+  return writeChain;
 }
 
 async function set(p, fixed, by, at) {
   if (fixed) state.set(p, { at, by: by || '' });
   else state.delete(p);
-  await writeSidecar();      // durable immediately (small file)
+  const result = fixed ? state.get(p) : null;
+  await persist();           // durable, serialized
   scheduleMaterialize();     // reflect into right CSV in the background
-  return fixed ? state.get(p) : null;
+  return result;
 }
 
 // --- background materialize of the `fixed` column into the right CSV ---------
