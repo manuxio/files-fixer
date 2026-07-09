@@ -43,6 +43,22 @@ async function record({ operation, absPath, rightPath, before, after, actor, not
   return rec;
 }
 
+// Lightweight audit line for non-destructive state changes (e.g. marking an
+// entry fixed) — no backup folder, just an append to the trail.
+async function event({ operation, absPath, actor, note, extra }) {
+  const rec = {
+    timestamp: new Date().toISOString(),
+    operation,
+    actor: (actor || 'operator').toString().slice(0, 120),
+    note: (note || '').toString().slice(0, 2000),
+    absolute_path: absPath,
+    ...(extra || {}),
+  };
+  await fsp.mkdir(path.dirname(auditLog), { recursive: true });
+  await fsp.appendFile(auditLog, JSON.stringify(rec) + '\n');
+  return rec;
+}
+
 async function tail(limit = 200) {
   try {
     const txt = await fsp.readFile(auditLog, 'utf8');
@@ -54,4 +70,4 @@ async function tail(limit = 200) {
   }
 }
 
-module.exports = { record, tail, backupDir, auditLog };
+module.exports = { record, event, tail, backupDir, auditLog };

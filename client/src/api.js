@@ -15,5 +15,6 @@ export const api = {
   del: (path, operator, note) => post('/api/delete', { path, operator, note }),
   overwrite: (path, operator, note) => post('/api/overwrite', { path, operator, note }),
   save: (path, content, operator, note) => post('/api/save', { path, content, operator, note }),
+  setFixed: (path, fixed, operator, note) => post('/api/fixed', { path, fixed, operator, note }),
   audit: () => j('/api/audit'),
 };

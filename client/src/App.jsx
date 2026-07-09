@@ -22,7 +22,7 @@ export default function App() {
   const [version, setVersion] = useState(0); // bumps to force editor rebuilds after ops
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
-  const [handled, setHandled] = useState({});
+  const [fixedMap, setFixedMap] = useState({}); // absolute_path -> { at, by } (persistent)
   const [history, setHistory] = useState(null);
 
   const draftRef = useRef('');
@@ -39,6 +39,9 @@ export default function App() {
       setLoadErr('');
       const d = await api.diff(refresh);
       setData(d);
+      const fm = {};
+      for (const w of d.websites) for (const f of w.files) if (f.fixed) fm[f.absolute_path] = { at: f.fixedAt, by: f.fixedBy };
+      setFixedMap(fm);
     } catch (e) {
       setLoadErr(String(e.message || e));
     }
@@ -91,15 +94,25 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, version, selected]);
 
-  const markHandled = (op) =>
-    setHandled((h) => ({ ...h, [selected.absolute_path]: { op, at: new Date().toLocaleTimeString() } }));
+  const toggleFixed = useCallback(async (file, value) => {
+    if (!file) return;
+    try {
+      const r = await api.setFixed(file.absolute_path, value, operator, '');
+      setFixedMap((m) => {
+        const n = { ...m };
+        if (value) n[file.absolute_path] = { at: r.at, by: r.by };
+        else delete n[file.absolute_path];
+        return n;
+      });
+    } catch (e) { notify(String(e.message || e), 'err'); }
+  }, [operator, notify]);
 
   const doDelete = async () => {
     if (!selected || !window.confirm(`Delete RIGHT file?\n\n${selected.absolute_path}\n\nA backup is written to /evidence.`)) return;
     setBusy(true);
     try {
       await api.del(selected.absolute_path, operator, '');
-      markHandled('deleted');
+      await toggleFixed(selected, true);
       notify('Deleted (backed up to /evidence)');
       await reloadSelected(selected);
       setMode('left');
@@ -113,7 +126,7 @@ export default function App() {
     setBusy(true);
     try {
       await api.overwrite(selected.absolute_path, operator, '');
-      markHandled(hasRight ? 'overwritten' : 'restored');
+      await toggleFixed(selected, true);
       notify(`${verb} done (backed up to /evidence)`);
       await reloadSelected(selected);
       setMode('right');
@@ -126,7 +139,7 @@ export default function App() {
     setBusy(true);
     try {
       await api.save(selected.absolute_path, draftRef.current, operator, '');
-      markHandled('edited');
+      await toggleFixed(selected, true);
       notify('Saved (backed up to /evidence)');
       await reloadSelected(selected);
       setMode('right');
@@ -153,7 +166,7 @@ export default function App() {
         query={query} setQuery={setQuery}
         statusFilter={statusFilter} setStatusFilter={setStatusFilter}
         selected={selected} onSelect={selectFile}
-        handled={handled}
+        fixedMap={fixedMap}
       />
 
       <main className="main">
@@ -164,7 +177,7 @@ export default function App() {
                 <span className="dot added">{data.totals.added} added</span>
                 <span className="dot modified">{data.totals.modified} modified</span>
                 <span className="dot deleted">{data.totals.deleted} deleted</span>
-                <span className="muted">· {data.totals.websites} sites · {data.totals.unchanged} unchanged</span>
+                <span className="muted">· {data.totals.fixed} fixed · {data.totals.websites} sites · {data.totals.unchanged} unchanged</span>
               </>
             ) : <span className="muted">loading…</span>}
           </div>
@@ -208,6 +221,16 @@ export default function App() {
                 <button className={`btn ${mode === 'edit' ? 'active' : ''}`} disabled={!hasRight} onClick={() => setMode('edit')}>Edit right</button>
               </div>
               <div className="spacer" />
+              <button
+                className={`btn fixed-toggle ${fixedMap[selected.absolute_path] ? 'on' : ''}`}
+                disabled={busy}
+                title={fixedMap[selected.absolute_path]
+                  ? `fixed by ${fixedMap[selected.absolute_path].by || '?'} @ ${fixedMap[selected.absolute_path].at || ''}`
+                  : 'Mark this entry as fixed (persisted to /evidence + right CSV)'}
+                onClick={() => toggleFixed(selected, !fixedMap[selected.absolute_path])}
+              >
+                {fixedMap[selected.absolute_path] ? '✔ Fixed' : 'Mark fixed'}
+              </button>
               {mode === 'edit' && <button className="btn primary" disabled={busy} onClick={doSave}>Save</button>}
               <button className="btn warn" disabled={busy || !hasLeft} onClick={doOverwrite}>
                 {hasRight ? 'Overwrite from left' : 'Restore from left'}

@@ -3,6 +3,7 @@ const fs = require('fs');
 const { parse } = require('csv-parse');
 const config = require('./config');
 const { websiteOf } = require('./paths');
+const fixedStore = require('./fixed');
 
 let cache = null;      // last computed result
 let building = null;   // in-flight promise (de-dupes concurrent requests)
@@ -15,7 +16,19 @@ function row(r) {
     last_modified: r.last_modified || '',
     size_bytes: r.size_bytes !== undefined && r.size_bytes !== '' ? Number(r.size_bytes) : null,
     sha256: (r.sha256 || '').toLowerCase(),
+    fixed: r.fixed || '', // may already carry the materialized column
   };
+}
+
+// Merge persistent fixed-state onto a file entry. Sidecar (fixedStore) wins;
+// otherwise fall back to a `fixed` value already present in the right CSV.
+function overlayFixed(f) {
+  const s = fixedStore.get(f.absolute_path);
+  const csvFixed = f.right && f.right.fixed;
+  if (s) { f.fixed = true; f.fixedAt = s.at || ''; f.fixedBy = s.by || ''; }
+  else if (csvFixed) { f.fixed = true; f.fixedAt = csvFixed; f.fixedBy = ''; }
+  else { f.fixed = false; f.fixedAt = null; f.fixedBy = null; }
+  return f;
 }
 
 function parser(file) {
@@ -72,7 +85,9 @@ async function computeDiff() {
     .map((w) => ({
       name: w.name,
       counts: { added: w.added.length, modified: w.modified.length, deleted: w.deleted.length, unchanged: w.unchanged },
-      files: [...w.added, ...w.modified, ...w.deleted].sort((a, b) => a.absolute_path.localeCompare(b.absolute_path)),
+      files: [...w.added, ...w.modified, ...w.deleted]
+        .map(overlayFixed)
+        .sort((a, b) => a.absolute_path.localeCompare(b.absolute_path)),
     }))
     // Only surface websites that actually have differences.
     .filter((w) => w.counts.added + w.counts.modified + w.counts.deleted > 0)
@@ -81,8 +96,9 @@ async function computeDiff() {
   const totals = list.reduce((t, w) => {
     t.added += w.counts.added; t.modified += w.counts.modified;
     t.deleted += w.counts.deleted; t.unchanged += w.counts.unchanged;
+    t.fixed += w.files.filter((f) => f.fixed).length;
     t.websites += 1; return t;
-  }, { websites: 0, added: 0, modified: 0, deleted: 0, unchanged: 0 });
+  }, { websites: 0, added: 0, modified: 0, deleted: 0, unchanged: 0, fixed: 0 });
 
   return {
     generatedAt: new Date().toISOString(),
@@ -94,6 +110,22 @@ async function computeDiff() {
   };
 }
 
+// Update the cached diff in place after a fixed-state toggle (avoids a full
+// recompute). `val` is { at, by } when fixed, or null when unfixed.
+function applyFixed(absPath, val) {
+  if (!cache) return;
+  for (const w of cache.websites) {
+    for (const f of w.files) {
+      if (f.absolute_path === absPath) {
+        if (val) { f.fixed = true; f.fixedAt = val.at || ''; f.fixedBy = val.by || ''; }
+        else { f.fixed = false; f.fixedAt = null; f.fixedBy = null; }
+        cache.totals.fixed = cache.websites.reduce((n, ww) => n + ww.files.filter((x) => x.fixed).length, 0);
+        return;
+      }
+    }
+  }
+}
+
 async function getDiff(refresh = false) {
   if (cache && !refresh) return cache;
   if (building) return building;
@@ -103,4 +135,4 @@ async function getDiff(refresh = false) {
   return building;
 }
 
-module.exports = { getDiff };
+module.exports = { getDiff, applyFixed };

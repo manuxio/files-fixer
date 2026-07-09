@@ -67,7 +67,7 @@ button, input { font-family: inherit; }
 }
 .file:hover { background: var(--panel-2); }
 .file.selected { background: #223049; border-left-color: var(--accent); }
-.file.handled .fname { text-decoration: line-through; color: var(--muted); }
+.file.fixed .fname { text-decoration: line-through; color: var(--muted); }
 .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .tick { color: var(--added); }
 .empty { padding: 20px; color: var(--muted); }
@@ -111,17 +111,19 @@ button, input { font-family: inherit; }
 .btn.warn { border-color: var(--modified); color: var(--modified); }
 .btn.danger { border-color: var(--deleted); color: var(--deleted); }
 .btn.ghost { background: transparent; }
+.btn.fixed-toggle.on { background: var(--added); border-color: var(--added); color: #06210d; font-weight: 700; }
 
 .viewer { flex: 1; min-height: 0; overflow: hidden; position: relative; }
 .cm-host { height: 100%; overflow: hidden; }
-.cm-host .cm-editor { height: 100%; }
-.cm-host .cm-scroller { overflow: auto; }
-/* diff view: constrain the whole pane chain so each editor scrolls internally.
-   MergeView keeps the two panes scrolled in sync; line-wrapping is on so there
-   is no horizontal drift between them. */
-.cm-host.merge .cm-mergeView,
-.cm-host.merge .cm-mergeViewEditors,
-.cm-host.merge .cm-mergeViewEditor { height: 100%; min-height: 0; }
+/* single-file view: the editor fills the host and its own scroller scrolls */
+.cm-host:not(.merge) .cm-editor { height: 100%; }
+.cm-host:not(.merge) .cm-scroller { overflow: auto; }
+/* diff view: MergeView scrolls as ONE container (its own overflowY:auto), so
+   the two panes scroll together / in sync. We only need to bound it to the
+   available height so that scroll engages. Do NOT force editor heights here —
+   that collapses the panes and kills scrolling. */
+.cm-host.merge { overflow: hidden; }
+.cm-host.merge .cm-mergeView { height: 100%; }
 .loading, .placeholder { padding: 24px; color: var(--muted); }
 .placeholder h2 { color: var(--text); font-weight: 600; }
 

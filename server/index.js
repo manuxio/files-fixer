@@ -4,9 +4,10 @@ const path = require('path');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const config = require('./config');
-const { getDiff } = require('./diff');
+const { getDiff, applyFixed } = require('./diff');
 const { resolveSide } = require('./paths');
 const audit = require('./audit');
+const fixedStore = require('./fixed');
 
 const app = express();
 app.use(express.json({ limit: '25mb' }));
@@ -94,6 +95,22 @@ app.post('/api/save', async (req, res) => {
     await fsp.writeFile(rp, after);
     const record = await audit.record({ operation: 'edit', absPath: abs, rightPath: rp, before, after, actor: operatorOf(req), note: req.body.note });
     res.json({ ok: true, record });
+  } catch (e) { fail(res, 400, e); }
+});
+
+// Mark/unmark an entry as fixed (persistent, all statuses). Updates the sidecar,
+// materializes a `fixed` column into the right CSV, and logs the change.
+app.post('/api/fixed', async (req, res) => {
+  try {
+    const abs = req.body.path;
+    if (!abs) return fail(res, 400, 'path required');
+    const fixed = !!req.body.fixed;
+    const actor = operatorOf(req);
+    const at = new Date().toISOString();
+    const val = await fixedStore.set(abs, fixed, actor, at);
+    applyFixed(abs, val);
+    await audit.event({ operation: fixed ? 'mark-fixed' : 'unmark-fixed', absPath: abs, actor, note: req.body.note });
+    res.json({ ok: true, fixed, at: fixed ? at : null, by: fixed ? actor : null });
   } catch (e) { fail(res, 400, e); }
 });
 
