@@ -10,7 +10,7 @@
 //   4. otherwise escalate to terminal.analyze() (`claude -p` in the hardened
 //      sandbox, unchanged) and apply the outcome:
 //        keep → mark fixed · left → overwrite right from left · delete →
-//        delete right · uncertain → leave for a human (counted, not touched),
+//        delete right · dontknow/uncertain → leave for a human (counted, not touched),
 //      also applying the same action to every byte-identical file (same sha),
 //   5. release the claim and continue until no work is left or the run is
 //      stopped. A 429 from analyze() (all accounts at usage limits) stops the
@@ -170,9 +170,11 @@ async function processFile(run, agent, f) {
   // 'left' needs a baseline to revert to; an added file has none — human call.
   if (outcome === 'left' && !cur.left) outcome = 'uncertain';
 
-  if (outcome === 'uncertain') {
+  // Claude abstained ('dontknow') or we couldn't parse a decision ('uncertain'):
+  // leave the file unresolved for a human — never guess.
+  if (outcome === 'dontknow' || outcome === 'uncertain') {
     run.stats.uncertain += 1;
-    await audit.event({ operation: 'agent-uncertain', absPath: abs, actor: agent.name, note: `needs human review: ${reason}` });
+    await audit.event({ operation: 'agent-uncertain', absPath: abs, actor: agent.name, note: `needs human review (${outcome}): ${reason}` });
     return;
   }
 

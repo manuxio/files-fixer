@@ -782,6 +782,7 @@ const OUTCOME_UI = {
   keep: { label: 'KEEP', cls: 'keep', headline: 'Safe to keep as-is', action: 'Mark fixed', actCls: 'fixed-toggle on' },
   left: { label: 'REVERT', cls: 'left', headline: 'Revert to the previous version', action: 'Overwrite from left', actCls: 'warn' },
   delete: { label: 'DELETE', cls: 'delete', headline: 'Malicious — delete it', action: 'Delete right', actCls: 'danger' },
+  dontknow: { label: "DON'T KNOW", cls: 'uncertain', headline: 'Claude could not decide — review manually', action: null, actCls: '' },
   uncertain: { label: 'UNCERTAIN', cls: 'uncertain', headline: 'Uncertain — review manually', action: null, actCls: '' },
 };
 
