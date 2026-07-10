@@ -44,6 +44,7 @@ export const api = {
   audit: () => j('/api/audit'),
   // claude web shell
   claudeStatus: () => j('/api/claude/status'),
+  claudeUsage: () => j('/api/claude/usage'),
   claudeAnalyze: (path) => post('/api/claude/analyze', { path }),
   // claude automation agents
   agents: () => j('/api/agents'),

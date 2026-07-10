@@ -81,6 +81,44 @@ function TerminalPane({ profile, path, onEnded, onBusy }) {
 
 const baseName = (p) => (p ? String(p).replace(/\\/g, '/').split('/').pop() : '');
 
+const fmtWhen = (iso) => {
+  const d = new Date(iso);
+  return isNaN(d) ? '' : d.toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+};
+
+// Relative time until `iso`, coarsened to the largest one or two units
+// ("51m", "2h 15m", "6d 3h"). Computed against now, so it's a snapshot that
+// matches the "usage as of" stamp — it doesn't tick.
+const fmtUntil = (iso) => {
+  const ms = new Date(iso) - Date.now();
+  if (isNaN(ms)) return '';
+  if (ms <= 0) return 'now';
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) { const m = mins % 60; return m ? `${hrs}h ${m}m` : `${hrs}h`; }
+  const days = Math.floor(hrs / 24); const h = hrs % 24;
+  return h ? `${days}d ${h}h` : `${days}d`;
+};
+
+// One rate-limit window as a mini meter: label, fill bar, the percentage as
+// text (color is a redundant cue, never the only signal), and how long until
+// the window resets. Hover shows the exact reset timestamp.
+function UsageMeter({ win }) {
+  const heat = win.pct >= 90 ? 'hot' : win.pct >= 70 ? 'warm' : '';
+  const until = win.resetsAt ? fmtUntil(win.resetsAt) : '';
+  return (
+    <span className="cs-usage-win">
+      <span className="cs-usage-row" title={win.resetsAt ? `resets ${fmtWhen(win.resetsAt)}` : undefined}>
+        <span className="cs-usage-label">{win.label}</span>
+        <span className="cs-usage-bar"><span className={heat} style={{ width: `${win.pct}%` }} /></span>
+        <span className="cs-usage-pct">{win.pct}%</span>
+      </span>
+      {until && <span className="cs-usage-reset">resets in {until}</span>}
+    </span>
+  );
+}
+
 export function ClaudeShellModal({ file, onClose }) {
   const filePath = file && file.absolute_path;
   const [status, setStatus] = useState(null);
@@ -88,6 +126,9 @@ export function ClaudeShellModal({ file, onClose }) {
   const [session, setSession] = useState(null); // { profile, key }
   const [ended, setEnded] = useState(false);
   const [notice, setNotice] = useState('');
+  const [usage, setUsage] = useState(null); // { fetchedAt, profiles: [{id, ok, windows|error}] }
+  const [usageBusy, setUsageBusy] = useState(false);
+  const [usageErr, setUsageErr] = useState('');
 
   const reloadStatus = useCallback(() => {
     setErr('');
@@ -102,6 +143,15 @@ export function ClaudeShellModal({ file, onClose }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [session, onClose]);
 
+  const checkUsage = useCallback(() => {
+    setUsageBusy(true);
+    setUsageErr('');
+    api.claudeUsage()
+      .then(setUsage)
+      .catch((e) => setUsageErr(String(e.message || e)))
+      .finally(() => setUsageBusy(false));
+  }, []);
+
   const start = useCallback((profile) => { if (!profile) return; setNotice(''); setEnded(false); setSession({ profile, key: Date.now() }); }, []);
   const restart = useCallback(() => { setEnded(false); setSession((s) => ({ profile: s.profile, key: Date.now() })); }, []);
   const back = useCallback(() => { setSession(null); setEnded(false); reloadStatus(); }, [reloadStatus]);
@@ -115,6 +165,8 @@ export function ClaudeShellModal({ file, onClose }) {
   const profiles = (status && status.profiles) || [];
   const disabled = status && (!status.enabled || !status.available);
   const next = (status && status.next) || (profiles[0] && profiles[0].id) || 1;
+  const usageById = {};
+  for (const u of (usage && usage.profiles) || []) usageById[u.id] = u;
 
   return (
     <div className="modal-backdrop" onClick={() => { if (!session) onClose(); }}>
@@ -165,23 +217,44 @@ export function ClaudeShellModal({ file, onClose }) {
                   Open session · account #{next}
                 </button>
                 <button className="btn ghost" onClick={reloadStatus} title="Refresh account status">Refresh</button>
+                <button
+                  className="btn ghost"
+                  onClick={checkUsage}
+                  disabled={usageBusy}
+                  title="Query each account's subscription usage (rate-limit windows)"
+                >
+                  {usageBusy ? 'Checking usage…' : 'Check usage'}
+                </button>
+                {usage && !usageBusy && <span className="muted small">usage as of {fmtWhen(usage.fetchedAt)}</span>}
               </div>
 
+              {usageErr && <div className="banner err">Could not check usage: {usageErr}</div>}
+
               <div className="cs-profiles">
-                {profiles.map((p) => (
-                  <button
-                    key={p.id}
-                    className={`cs-profile ${p.id === next ? 'next' : ''}`}
-                    title={`open a session on account #${p.id}${p.sessions ? ` (${p.sessions} running)` : ''}`}
-                    onClick={() => start(p.id)}
-                  >
-                    <span className="cs-profile-n">#{p.id}</span>
-                    <span className={`cs-profile-state ${p.configured ? 'on' : ''}`}>
-                      {p.configured ? (p.sessions ? `${p.sessions} running` : 'ready') : 'not logged in'}
-                    </span>
-                    {p.id === next && <span className="cs-profile-tag">next</span>}
-                  </button>
-                ))}
+                {profiles.map((p) => {
+                  const u = usageById[p.id];
+                  return (
+                    <button
+                      key={p.id}
+                      className={`cs-profile ${p.id === next ? 'next' : ''}`}
+                      title={`open a session on account #${p.id}${p.sessions ? ` (${p.sessions} running)` : ''}`}
+                      onClick={() => start(p.id)}
+                    >
+                      <span className="cs-profile-n">#{p.id}</span>
+                      <span className={`cs-profile-state ${p.configured ? 'on' : ''}`}>
+                        {p.configured ? (p.sessions ? `${p.sessions} running` : 'ready') : 'not logged in'}
+                        {u && u.subscription && ` · ${u.subscription}`}
+                      </span>
+                      {p.id === next && <span className="cs-profile-tag">next</span>}
+                      {u && u.ok && (
+                        <span className="cs-usage">
+                          {u.windows.map((w) => <UsageMeter key={w.key} win={w} />)}
+                        </span>
+                      )}
+                      {u && !u.ok && <span className="cs-usage-err" title={u.error}>{u.error}</span>}
+                    </button>
+                  );
+                })}
               </div>
 
               <p className="muted small">

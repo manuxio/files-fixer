@@ -378,6 +378,22 @@ button, input { font-family: inherit; }
   text-transform: uppercase; color: #04121f; background: var(--accent); padding: 1px 6px; border-radius: 999px;
 }
 
+/* Per-account usage readout (rate-limit windows) inside a profile card */
+.cs-usage { display: flex; flex-direction: column; gap: 6px; width: 100%; margin-top: 4px; }
+.cs-usage-win { display: flex; flex-direction: column; gap: 1px; }
+.cs-usage-reset { font-size: 9.5px; color: var(--muted); }
+.cs-usage-row { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--muted); }
+.cs-usage-label { flex: 0 0 62px; }
+.cs-usage-bar {
+  flex: 1 1 auto; height: 4px; border-radius: 999px; overflow: hidden;
+  background: var(--panel); border: 1px solid var(--border);
+}
+.cs-usage-bar > span { display: block; height: 100%; border-radius: 999px; background: var(--accent); }
+.cs-usage-bar > span.warm { background: var(--modified); }
+.cs-usage-bar > span.hot { background: var(--deleted); }
+.cs-usage-pct { flex: 0 0 34px; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+.cs-usage-err { font-size: 10.5px; color: var(--modified); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* --- Ask Claude button + analyze modal ---------------------------------- */
 .btn.ask-claude { border-color: var(--accent); color: var(--accent); }
 .btn.ask-claude:hover:not(:disabled) { background: rgba(74,158,255,.12); }

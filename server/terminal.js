@@ -110,6 +110,75 @@ function status() {
   };
 }
 
+// --- per-profile usage (subscription rate-limit windows) -------------------
+// Each profile's .credentials.json holds the OAuth token Claude Code logs in
+// with; the same endpoint the CLI's /usage screen queries reports how much of
+// each rate-limit window (5-hour session, 7-day, 7-day Opus) is consumed.
+// The endpoint is undocumented, so parse defensively and degrade per profile
+// instead of failing the whole request.
+const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
+const USAGE_LABELS = { five_hour: '5-hour', seven_day: '7-day', seven_day_opus: '7-day Opus' };
+
+function readOauthCredentials(n) {
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(profileDir(n), '.credentials.json'), 'utf8'));
+    return (j && j.claudeAiOauth) || null;
+  } catch { return null; } // missing/unreadable -> not logged in
+}
+
+async function usageOf(n) {
+  const cred = readOauthCredentials(n);
+  if (!cred || !cred.accessToken) return { id: n, configured: false, ok: false, error: 'not logged in' };
+  const base = { id: n, configured: true, subscription: cred.subscriptionType || null };
+  // Expired tokens are refreshed by the CLI on use, not by us.
+  if (Number.isFinite(cred.expiresAt) && cred.expiresAt < Date.now()) {
+    return { ...base, ok: false, error: 'token expired — open a session on this account to refresh it' };
+  }
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 10_000);
+  try {
+    const res = await fetch(USAGE_URL, {
+      headers: {
+        authorization: `Bearer ${cred.accessToken}`,
+        'anthropic-beta': 'oauth-2025-04-20', // OAuth tokens require this beta header
+        'content-type': 'application/json',
+      },
+      signal: ctl.signal,
+    });
+    if (!res.ok) {
+      const msg = res.status === 401
+        ? 'token rejected — open a session on this account to refresh it'
+        : `usage endpoint answered ${res.status}`;
+      return { ...base, ok: false, error: msg };
+    }
+    const data = await res.json();
+    // Known windows first; if the response shape drifted, fall back to any
+    // top-level object carrying a numeric `utilization` (percent 0-100).
+    const pick = (keys) => keys
+      .filter((k) => data && data[k] && typeof data[k] === 'object' && Number.isFinite(Number(data[k].utilization)))
+      .map((k) => ({
+        key: k,
+        label: USAGE_LABELS[k] || k.replace(/_/g, ' '),
+        pct: Math.max(0, Math.min(100, Math.round(Number(data[k].utilization)))),
+        resetsAt: data[k].resets_at || null,
+      }));
+    let windows = pick(Object.keys(USAGE_LABELS));
+    if (!windows.length) windows = pick(Object.keys(data || {}));
+    if (!windows.length) return { ...base, ok: false, error: 'unrecognized usage response' };
+    return { ...base, ok: true, windows };
+  } catch (e) {
+    const msg = e.name === 'AbortError' ? 'usage endpoint timed out' : (e.message || String(e));
+    return { ...base, ok: false, error: msg };
+  } finally { clearTimeout(timer); }
+}
+
+async function usage() {
+  if (!config.claudeShell) { const e = new Error('Claude is disabled (CLAUDE_SHELL=0)'); e.status = 400; throw e; }
+  const ids = Array.from({ length: config.claudeProfileCount }, (_, i) => i + 1);
+  const profiles = await Promise.all(ids.map(usageOf));
+  return { fetchedAt: new Date().toISOString(), profiles };
+}
+
 const clamp = (v, lo, hi, dflt) => {
   const n = Number(v);
   return Number.isFinite(n) ? Math.min(hi, Math.max(lo, Math.round(n))) : dflt;
@@ -403,7 +472,10 @@ function attach(server) {
 // --- one-shot analysis (`claude -p`) --------------------------------------
 // Same hardened sandbox as the interactive shell, but non-interactive: we ask
 // Claude to triage current.* vs previous.* and answer with a fixed JSON shape.
-const ANALYZE_OUTCOMES = ['keep', 'delete', 'left', 'uncertain'];
+// 'dontknow' is Claude's explicit abstention (it looked but cannot decide);
+// 'uncertain' is our internal fallback for output we could not parse. Both mean
+// "leave it for a human" downstream, but the label tells the operator which.
+const ANALYZE_OUTCOMES = ['keep', 'delete', 'left', 'dontknow', 'uncertain'];
 
 function shuffle(arr) {
   const a = arr.slice();
@@ -421,12 +493,12 @@ function analysisPrompt(present) {
     prev ? `"${prev}" is the PREVIOUS (trusted baseline) version of the same file.` : 'No previous/baseline version is present.',
     'Read the available file(s) and judge them by content: injected eval/base64/gzinflate/system payloads, backdoors, webshells, obfuscation, unexpected network or exec calls, and tampering relative to the baseline.',
     'Reply with ONLY a single minified JSON object — no prose, no markdown, no code fences — of exactly this shape:',
-    '{"outcome":"keep|delete|left|uncertain","brief_reason":"<one concise sentence>"}',
+    '{"outcome":"keep|delete|left|dontknow","brief_reason":"<one concise sentence>"}',
     'Outcome meaning:',
     '- "keep": the current file is benign/safe — keep it as is.',
     prev ? '- "left": the current file is compromised or tampered — revert to the trusted previous version.' : '- "left": revert to the trusted previous baseline version.',
     '- "delete": the current file is malicious and there is no trustworthy prior version — delete it.',
-    '- "uncertain": you cannot confidently determine whether it is safe.',
+    '- "dontknow": you genuinely cannot confidently determine whether it is safe — abstain and leave it for a human to review. Prefer this over guessing.',
     'Output the JSON object and nothing else.',
   ].join('\n');
 }
@@ -472,7 +544,10 @@ function parseOutcome(stdout) {
   const obj = extractJson(text) || {};
   const outcome = ANALYZE_OUTCOMES.includes(obj.outcome) ? obj.outcome : 'uncertain';
   let brief = typeof obj.brief_reason === 'string' ? obj.brief_reason.trim().slice(0, 800) : '';
-  if (!brief && outcome === 'uncertain') brief = 'Could not parse a structured decision from the model output.';
+  if (!brief) {
+    if (outcome === 'dontknow') brief = 'Claude could not confidently determine whether the file is safe.';
+    else if (outcome === 'uncertain') brief = 'Could not parse a structured decision from the model output.';
+  }
   return { outcome, brief_reason: brief };
 }
 
@@ -530,4 +605,4 @@ async function analyze(csvPath) {
   }
 }
 
-module.exports = { attach, status, analyze };
+module.exports = { attach, status, usage, analyze };

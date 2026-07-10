@@ -326,8 +326,16 @@ app.get('/api/claude/status', (req, res) => {
   catch (e) { fail(res, 500, e); }
 });
 
+// Live per-account usage (subscription rate-limit windows) for the profile
+// picker. Queries Anthropic with each profile's stored OAuth token; failures
+// are reported per profile, never as a whole-request error.
+app.get('/api/claude/usage', async (req, res) => {
+  try { res.json(await terminal.usage()); }
+  catch (e) { fail(res, e.status || 500, e); }
+});
+
 // One-shot triage of a selected file with `claude -p` in the hardened sandbox.
-// Returns { outcome: keep|delete|left|uncertain, brief_reason, profile, ... }.
+// Returns { outcome: keep|delete|left|dontknow, brief_reason, profile, ... }.
 app.post('/api/claude/analyze', async (req, res) => {
   try {
     const abs = req.body && req.body.path;
