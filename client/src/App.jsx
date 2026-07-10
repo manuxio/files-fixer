@@ -112,6 +112,41 @@ export default function App() {
     summaryTimer.current = setTimeout(() => { api.summary(false).then(setSummary).catch(() => {}); }, 300);
   }, []);
 
+  // Per-folder refresh (the sidebar ↻ button): re-sync one directory's counts
+  // from the server's current diff. Cheap (cached, no CSV recompute) and only
+  // replaces that website's counts, leaving the rest of the summary untouched.
+  const refreshSiteCounts = useCallback(async (website) => {
+    try {
+      const s = await api.summary(false);
+      const fresh = s.websites.find((w) => w.name === website);
+      setSummary((cur) => (cur && fresh
+        ? { ...cur, totals: s.totals, websites: cur.websites.map((w) => (w.name === website ? fresh : w)) }
+        : s));
+      const p = (s.websites.find((w) => w.name === website) || {}).patched;
+      if (p) setPatchedMap((m) => ({ ...m, [website]: p }));
+    } catch { /* ignore — counts also update live via SSE */ }
+  }, []);
+
+  // Optimistically move a file between its status bucket and "fixed" in the
+  // sidebar counters (per-folder counts + top-bar totals), so the numbers next
+  // to each folder update live on every fixed event — our own, another
+  // operator's, or an agent's — with no wait for a summary refetch. `status` is
+  // added|modified|deleted. The server's cache stays authoritative; a later
+  // refetch (Refresh CSVs, or a mutated/agent event) reconciles any drift.
+  const adjustFixedCounts = useCallback((website, status, value) => {
+    if (!status) return;
+    setSummary((s) => {
+      if (!s) return s;
+      const d = value ? 1 : -1; // fixed +1 / status -1 (reversed on unmark)
+      const adj = (c) => ({ ...c, fixed: Math.max(0, (c.fixed || 0) + d), [status]: Math.max(0, (c[status] || 0) - d) });
+      return {
+        ...s,
+        totals: adj(s.totals),
+        websites: s.websites.map((w) => (w.name === website ? { ...w, counts: adj(w.counts) } : w)),
+      };
+    });
+  }, []);
+
   // Subscribe to live updates from other operators (once).
   useEffect(() => {
     const es = new EventSource(api.eventsUrl());
@@ -120,7 +155,8 @@ export default function App() {
       const d = JSON.parse(e.data);
       if (d.clientId === clientId) return; // ignore our own echo
       setFixedOverride((o) => ({ ...o, [d.path]: d.fixed }));
-      scheduleSummaryRefresh();
+      if (d.status) adjustFixedCounts(d.website, d.status, d.fixed); // live counter update
+      else scheduleSummaryRefresh();                                 // fallback: payload without status
       notify(`${d.by || 'someone'} ${d.fixed ? 'marked fixed' : 'unmarked'}: ${base(d.path)}`);
     });
     es.addEventListener('mutated', (e) => {
@@ -285,19 +321,9 @@ export default function App() {
     try {
       await api.setFixed(file.absolute_path, value, operator, '');
       setFixedOverride((o) => ({ ...o, [file.absolute_path]: value }));
-      if (value !== prev) setSummary((s) => {
-        if (!s) return s;
-        const d = value ? 1 : -1;      // fixed +1 / status -1  (and reverse on unmark)
-        const st = file.status;
-        const adj = (c) => ({ ...c, fixed: Math.max(0, (c.fixed || 0) + d), [st]: Math.max(0, (c[st] || 0) - d) });
-        return {
-          ...s,
-          totals: adj(s.totals),
-          websites: s.websites.map((w) => (w.name === file.website ? { ...w, counts: adj(w.counts) } : w)),
-        };
-      });
+      if (value !== prev) adjustFixedCounts(file.website, file.status, value);
     } catch (e) { notify(String(e.message || e), 'err'); }
-  }, [operator, notify, fixedOverride]);
+  }, [operator, notify, fixedOverride, adjustFixedCounts]);
 
   const doDelete = async () => {
     if (!selected || !ensureOperator()) return;
@@ -580,6 +606,7 @@ export default function App() {
         agentRuns={agentRuns}
         onAgents={agentsEnabled ? onAgentsClick : null}
         onPatch={jceAvailable ? openPatch : null}
+        onRefreshSite={refreshSiteCounts}
         multiSel={multiSel} onToggleMulti={toggleMulti}
       />
 

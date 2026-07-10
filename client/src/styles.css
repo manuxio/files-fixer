@@ -66,6 +66,10 @@ button, input { font-family: inherit; }
 .agent-btn:hover { border-color: var(--accent); color: var(--accent); }
 .agent-btn.running { border-color: var(--accent); color: var(--accent); animation: agent-pulse 1.6s ease-in-out infinite; }
 @keyframes agent-pulse { 50% { opacity: .4; } }
+.refresh-btn { background: transparent; border: 1px solid var(--border); color: var(--muted); border-radius: 4px; cursor: pointer; font-size: 12px; padding: 0 5px; line-height: 1.4; }
+.refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+.refresh-btn.spinning { color: var(--accent); animation: refresh-spin .8s linear infinite; }
+@keyframes refresh-spin { to { transform: rotate(360deg); } }
 .dot { font-size: 11px; padding: 0 6px; border-radius: 999px; color: #0b0e12; font-weight: 700; }
 .dot.added { background: var(--added); }
 .dot.modified { background: var(--modified); }

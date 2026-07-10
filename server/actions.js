@@ -8,7 +8,7 @@ const path = require('path');
 const fsp = require('fs/promises');
 const crypto = require('crypto');
 const { resolveSide, websiteOf } = require('./paths');
-const { applyFixed } = require('./diff');
+const { applyFixed, findFile } = require('./diff');
 const audit = require('./audit');
 const fixedStore = require('./fixed');
 const events = require('./events');
@@ -60,7 +60,10 @@ async function setFixed(abs, fixed, actor, { note, clientId } = {}) {
   const val = await fixedStore.set(abs, !!fixed, actor, at);
   applyFixed(abs, val);
   await audit.event({ operation: fixed ? 'mark-fixed' : 'unmark-fixed', absPath: abs, actor, note });
-  events.broadcast('fixed', { path: abs, website: websiteOf(abs), fixed: !!fixed, at: fixed ? at : null, by: fixed ? actor : null, clientId: clientId || null });
+  // `status` (added|modified|deleted) lets clients move the file between counters
+  // live; applyFixed above doesn't change it. Null when the path isn't in the diff.
+  const f = findFile(abs);
+  events.broadcast('fixed', { path: abs, website: websiteOf(abs), status: f ? f.status : null, fixed: !!fixed, at: fixed ? at : null, by: fixed ? actor : null, clientId: clientId || null });
   return { fixed: !!fixed, at: fixed ? at : null, by: fixed ? actor : null };
 }
 

@@ -49,7 +49,7 @@ function PatchedLabel({ p }) {
   return <span className={`patched-label ${cls}`} title={`patched: JCE ${p.status}${p.jce ? ' ' + p.jce : ''}${p.at ? ' @ ' + p.at : ''}`}>&lt;P&gt;</span>;
 }
 
-export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilter, selected, onSelect, isFixed, reloadToken, viewersByPath = {}, patchedMap = {}, agentRuns = {}, onAgents = null, onPatch = null, multiSel = {}, onToggleMulti = null }) {
+export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilter, selected, onSelect, isFixed, reloadToken, viewersByPath = {}, patchedMap = {}, agentRuns = {}, onAgents = null, onPatch = null, onRefreshSite = null, multiSel = {}, onToggleMulti = null }) {
   const [expanded, setExpanded] = useState({});
   const [browse, setBrowse] = useState({});   // name -> { files, total, offset, loading }
   const [search, setSearch] = useState(null); // { files, total, offset, loading }
@@ -90,6 +90,17 @@ export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilte
     const willExpand = !expanded[name];
     setExpanded((e) => ({ ...e, [name]: willExpand }));
     if (willExpand) ensureBrowse(name);
+  };
+
+  // Per-folder refresh: reload just this folder's file page from the server and
+  // ask the parent to refresh its counts — a light re-sync for one directory,
+  // without the global "Refresh CSVs" full recompute.
+  const refreshSite = (name) => {
+    setBrowse((b) => ({ ...b, [name]: { ...(b[name] || { files: [], total: 0, offset: 0 }), loading: true } }));
+    api.files({ website: name, status: statusFilter, sort, offset: 0, limit: LIMIT })
+      .then((r) => setBrowse((b) => ({ ...b, [name]: { files: r.files, total: r.total, offset: r.files.length, loading: false } })))
+      .catch(() => setBrowse((b) => ({ ...b, [name]: { ...(b[name] || { files: [], total: 0, offset: 0 }), loading: false } })));
+    if (onRefreshSite) onRefreshSite(name);
   };
 
   const loadMoreBrowse = (name) => {
@@ -201,6 +212,13 @@ export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilte
                 <span className="caret">{isOpen ? '▾' : '▸'}</span>
                 <span className="site-name" title={w.name}>{w.name}</span>
                 <PatchedLabel p={patchedMap[w.name]} />
+                {onRefreshSite && (
+                  <button
+                    className={`refresh-btn ${page && page.loading ? 'spinning' : ''}`}
+                    title="Refresh this folder (reload its files & counts)"
+                    onClick={(e) => { e.stopPropagation(); refreshSite(w.name); }}
+                  >↻</button>
+                )}
                 {onAgents && (
                   <button
                     className={`agent-btn ${run ? 'running' : ''}`}
