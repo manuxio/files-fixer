@@ -70,6 +70,7 @@ export default function App() {
   const [agentTarget, setAgentTarget] = useState(null); // website name -> opens the "how many agents" dialog
   const [agentBusy, setAgentBusy] = useState(false);
   const [agentDone, setAgentDone] = useState([]); // queue of finished-pool notices -> popup
+  const [agentStartErr, setAgentStartErr] = useState(null); // why a start attempt failed (shown in the dialog)
 
   const [jceAvailable, setJceAvailable] = useState(false);
   const [patchedMap, setPatchedMap] = useState({});   // website -> { status, at, jce }
@@ -540,6 +541,7 @@ export default function App() {
       if (!window.confirm(`Stop the ${run.count} Claude agent(s) on ${website}?${inFlight ? `\n\n${inFlight} file(s) currently in flight will finish first.` : ''}`)) return;
       api.agentsStop(website, operator).catch((e) => notify(String(e.message || e), 'err'));
     } else {
+      setAgentStartErr(null);
       setAgentTarget(website);
     }
   };
@@ -547,11 +549,16 @@ export default function App() {
   const startAgents = async (count) => {
     if (!ensureOperator()) return;
     setAgentBusy(true);
+    setAgentStartErr(null);
     try {
       await api.agentsStart(agentTarget, count, operator);
       setAgentTarget(null);
-    } catch (e) { notify(String(e.message || e), 'err'); }
-    finally { setAgentBusy(false); }
+    } catch (e) {
+      // Keep the dialog open and show WHY it didn't start (e.g. "no unresolved
+      // files to process", "automation already running", "no logged-in Claude
+      // account") instead of a fleeting toast that reads as "nothing happened".
+      setAgentStartErr(String(e.message || e));
+    } finally { setAgentBusy(false); }
   };
 
   const openPatch = (website) => {
@@ -830,8 +837,10 @@ export default function App() {
       )}
       {agentTarget && (
         <AgentsModal
-          website={agentTarget} busy={agentBusy} onStart={startAgents}
-          onClose={() => { if (!agentBusy) setAgentTarget(null); }}
+          website={agentTarget} busy={agentBusy} error={agentStartErr}
+          counts={(summary && summary.websites.find((w) => w.name === agentTarget) || {}).counts || null}
+          onStart={startAgents}
+          onClose={() => { if (!agentBusy) { setAgentTarget(null); setAgentStartErr(null); } }}
         />
       )}
       {agentDone.length > 0 && (
@@ -953,8 +962,12 @@ function AnalyzeModal({ state, hasRight, hasLeft, isFixed, onApply, onRetry, onC
   );
 }
 
-function AgentsModal({ website, busy, onStart, onClose }) {
+function AgentsModal({ website, busy, error, counts, onStart, onClose }) {
   const [count, setCount] = useState(2);
+  // Agents act on added + modified files; deletions are left-only (nothing to
+  // remediate) and fixed files are already resolved — so "workable" excludes both.
+  const workable = counts ? (counts.added || 0) + (counts.modified || 0) : null;
+  const nothingToDo = workable === 0;
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal small" onClick={(e) => e.stopPropagation()}>
@@ -971,21 +984,39 @@ function AgentsModal({ website, busy, onStart, onClose }) {
             including every byte-identical copy. Uncertain files are left for a human. Every change is
             attributed to the agent, backed up to /evidence and broadcast live.
           </p>
+
+          {counts && (
+            <div className={`agent-scope ${nothingToDo ? 'empty' : ''}`}>
+              {nothingToDo ? (
+                <>Nothing to process here — every changed file is already resolved
+                {counts.deleted ? `, or is a deletion (agents skip the ${counts.deleted} left-only file${counts.deleted === 1 ? '' : 's'})` : ''}.
+                {counts.fixed ? ` ${counts.fixed} already fixed.` : ''} There's nothing to start.</>
+              ) : (
+                <><b>{workable}</b> file{workable === 1 ? '' : 's'} to process
+                {' '}({counts.added || 0} added, {counts.modified || 0} modified)
+                {counts.deleted ? ` · ${counts.deleted} deletion${counts.deleted === 1 ? '' : 's'} skipped` : ''}
+                {counts.fixed ? ` · ${counts.fixed} already fixed` : ''}.</>
+              )}
+            </div>
+          )}
+
           <div className="agent-count">
             <span className="muted">Agents to spawn</span>
             {[1, 2, 3, 4, 5].map((n) => (
-              <button key={n} className={`chip ${count === n ? 'active' : ''}`} disabled={busy} onClick={() => setCount(n)}>{n}</button>
+              <button key={n} className={`chip ${count === n ? 'active' : ''}`} disabled={busy || nothingToDo} onClick={() => setCount(n)}>{n}</button>
             ))}
           </div>
           <div className="muted small">
             More agents = more files processed in parallel — they share the logged-in Claude accounts.
             The same ✦ button stops them while they run.
           </div>
+
+          {error && <div className="banner err">Couldn’t start: {error}</div>}
         </div>
         <div className="modal-foot">
           <button className="btn ghost" disabled={busy} onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={busy} onClick={() => onStart(count)}>
-            {busy ? 'Starting…' : `Start ${count} agent${count === 1 ? '' : 's'}`}
+          <button className="btn primary" disabled={busy || nothingToDo} onClick={() => onStart(count)}>
+            {busy ? 'Starting…' : nothingToDo ? 'Nothing to process' : `Start ${count} agent${count === 1 ? '' : 's'}`}
           </button>
         </div>
       </div>
