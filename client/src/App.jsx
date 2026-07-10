@@ -63,6 +63,11 @@ export default function App() {
   useEffect(() => { if (jceSourceVersion) localStorage.setItem('ff.jceSourceVersion', jceSourceVersion); }, [jceSourceVersion]);
   const [jceSrc, setJceSrc] = useState(null); // pristine JCE-file lookup for the selected file
 
+  const [agentRuns, setAgentRuns] = useState({});     // website -> live automation run status
+  const [agentsEnabled, setAgentsEnabled] = useState(false); // Claude automation available on the server?
+  const [agentTarget, setAgentTarget] = useState(null); // website name -> opens the "how many agents" dialog
+  const [agentBusy, setAgentBusy] = useState(false);
+
   const [jceAvailable, setJceAvailable] = useState(false);
   const [patchedMap, setPatchedMap] = useState({});   // website -> { status, at, jce }
   const [patchTarget, setPatchTarget] = useState(null); // website name -> opens the dialog
@@ -134,6 +139,19 @@ export default function App() {
       setRulesReload((t) => t + 1); // refresh an open rules panel
       if (d.clientId !== clientId) notify(`${d.by || 'someone'}: ${d.op} rule ${d.id}`);
     });
+    es.addEventListener('agents', (e) => {
+      const d = JSON.parse(e.data);
+      setAgentRuns((m) => {
+        const n = { ...m };
+        if (d.op === 'stopped') delete n[d.website]; else n[d.website] = d;
+        return n;
+      });
+      if (d.op === 'started') notify(`${d.by || 'someone'} started ${d.count} Claude agent(s) on ${d.website}`);
+      if (d.op === 'stopped') {
+        notify(`✦ ${d.website}: ${d.reason}`, /unavailable|error/i.test(d.reason) ? 'err' : 'ok');
+        scheduleSummaryRefresh();
+      }
+    });
     es.onerror = () => { /* EventSource reconnects automatically */ };
     return () => es.close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -149,6 +167,16 @@ export default function App() {
 
   // is the JCE remediation feature available (dropper + packages bundled)?
   useEffect(() => { api.jceStatus().then((s) => setJceAvailable(!!s.available)).catch(() => {}); }, []);
+
+  // Claude automation: availability + any runs already in flight (page reload).
+  useEffect(() => {
+    api.agents().then((r) => {
+      setAgentsEnabled(!!r.enabled);
+      const m = {};
+      for (const run of r.runs || []) m[run.website] = run;
+      setAgentRuns(m);
+    }).catch(() => {});
+  }, []);
 
   // discover pristine Joomla versions available on the server
   useEffect(() => {
@@ -195,6 +223,8 @@ export default function App() {
   }, [mode, selected, joomlaVersion, version]);
 
   const others = useMemo(() => viewers.filter((v) => v.id !== clientId), [viewers]);
+  const humans = useMemo(() => others.filter((v) => v.kind !== 'agent'), [others]);
+  const agentViewers = useMemo(() => others.filter((v) => v.kind === 'agent'), [others]);
   const viewersByPath = useMemo(() => {
     const m = {};
     for (const v of others) if (v.path) (m[v.path] = m[v.path] || []).push(v);
@@ -441,6 +471,30 @@ export default function App() {
     catch (e) { notify(String(e.message || e), 'err'); }
   };
 
+  // The sidebar ✦ button: idle -> open the "how many agents" dialog; running ->
+  // confirm, then stop that website's agents.
+  const onAgentsClick = (website) => {
+    if (!ensureOperator()) return;
+    const run = agentRuns[website];
+    if (run) {
+      const inFlight = (run.agents || []).filter((a) => a.path).length;
+      if (!window.confirm(`Stop the ${run.count} Claude agent(s) on ${website}?${inFlight ? `\n\n${inFlight} file(s) currently in flight will finish first.` : ''}`)) return;
+      api.agentsStop(website, operator).catch((e) => notify(String(e.message || e), 'err'));
+    } else {
+      setAgentTarget(website);
+    }
+  };
+
+  const startAgents = async (count) => {
+    if (!ensureOperator()) return;
+    setAgentBusy(true);
+    try {
+      await api.agentsStart(agentTarget, count, operator);
+      setAgentTarget(null);
+    } catch (e) { notify(String(e.message || e), 'err'); }
+    finally { setAgentBusy(false); }
+  };
+
   const openPatch = (website) => {
     if (!ensureOperator()) return;
     setPatchTarget(website);
@@ -493,6 +547,8 @@ export default function App() {
         isFixed={isFixed} reloadToken={reloadToken}
         viewersByPath={viewersByPath}
         patchedMap={patchedMap}
+        agentRuns={agentRuns}
+        onAgents={agentsEnabled ? onAgentsClick : null}
         onPatch={jceAvailable ? openPatch : null}
         multiSel={multiSel} onToggleMulti={toggleMulti}
       />
@@ -514,9 +570,9 @@ export default function App() {
           <div className="spacer" />
           <span
             className="presence"
-            title={others.length ? others.map((v) => `${v.operator || 'anonymous'}${v.path ? ' · ' + base(v.path) : ''}`).join('\n') : 'just you'}
+            title={others.length ? others.map((v) => `${v.kind === 'agent' ? '✦' : '👤'} ${v.operator || 'anonymous'}${v.path ? ' · ' + base(v.path) : ''}`).join('\n') : 'just you'}
           >
-            👤 {others.length + 1} online
+            👤 {humans.length + 1} online{agentViewers.length > 0 && <span className="presence-agents"> · ✦ {agentViewers.length} agent{agentViewers.length === 1 ? '' : 's'}</span>}
           </span>
           <label className={`operator ${canEdit ? '' : 'required'}`}>
             operator
@@ -573,7 +629,7 @@ export default function App() {
               </span>
               {viewersByPath[selected.absolute_path] && (
                 <span className="also" title="other operators on this file right now">
-                  ⚠ also here: {viewersByPath[selected.absolute_path].map((v) => `${v.operator || 'anon'}${v.mode === 'edit' ? ' (editing)' : ''}`).join(', ')}
+                  ⚠ also here: {viewersByPath[selected.absolute_path].map((v) => `${v.kind === 'agent' ? '✦ ' : ''}${v.operator || 'anon'}${v.mode === 'edit' ? ' (editing)' : ''}`).join(', ')}
                 </span>
               )}
             </div>
@@ -705,6 +761,12 @@ export default function App() {
           onApply={applyProposal} onRetry={askClaude} onClose={() => setClaudeAsk(null)}
         />
       )}
+      {agentTarget && (
+        <AgentsModal
+          website={agentTarget} busy={agentBusy} onStart={startAgents}
+          onClose={() => { if (!agentBusy) setAgentTarget(null); }}
+        />
+      )}
       {patchTarget && (
         <PatchModal
           website={patchTarget} form={patchForm} setForm={setPatchForm}
@@ -811,6 +873,46 @@ function AnalyzeModal({ state, hasRight, hasLeft, isFixed, onApply, onRetry, onC
               </div>
             </>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AgentsModal({ website, busy, onStart, onClose }) {
+  const [count, setCount] = useState(2);
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal small" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>✦ Claude automation · {website}</h3>
+          <button className="btn ghost" disabled={busy} onClick={onClose}>Close</button>
+        </div>
+        <div className="modal-body pad">
+          <p className="muted">
+            Spawns agents that work through this site's unresolved changed files, one file at a time:
+            files the local classifier deems safe (known-good checksum or low risk) are marked fixed;
+            the rest are triaged by <code>claude -p</code> in the hardened sandbox and the proposal is
+            applied — <b>keep</b> → mark fixed, <b>revert</b> → overwrite from left, <b>delete</b> → delete right —
+            including every byte-identical copy. Uncertain files are left for a human. Every change is
+            attributed to the agent, backed up to /evidence and broadcast live.
+          </p>
+          <div className="agent-count">
+            <span className="muted">Agents to spawn</span>
+            {[1, 2, 3, 4, 5].map((n) => (
+              <button key={n} className={`chip ${count === n ? 'active' : ''}`} disabled={busy} onClick={() => setCount(n)}>{n}</button>
+            ))}
+          </div>
+          <div className="muted small">
+            More agents = more files processed in parallel — they share the logged-in Claude accounts.
+            The same ✦ button stops them while they run.
+          </div>
+        </div>
+        <div className="modal-foot">
+          <button className="btn ghost" disabled={busy} onClick={onClose}>Cancel</button>
+          <button className="btn primary" disabled={busy} onClick={() => onStart(count)}>
+            {busy ? 'Starting…' : `Start ${count} agent${count === 1 ? '' : 's'}`}
+          </button>
         </div>
       </div>
     </div>

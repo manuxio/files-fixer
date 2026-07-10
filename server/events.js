@@ -23,15 +23,22 @@ function broadcast(event, data) {
 
 function viewers() {
   const now = Date.now();
-  for (const [id, p] of presence) if (now - Date.parse(p.at) > STALE_MS) presence.delete(id);
-  return [...presence.entries()].map(([id, p]) => ({ id, operator: p.operator, path: p.path, mode: p.mode }));
+  // Agents (kind:'agent') have no heartbeat — they are added/removed explicitly
+  // by agents.js, so they are exempt from staleness pruning.
+  for (const [id, p] of presence) if (p.kind !== 'agent' && now - Date.parse(p.at) > STALE_MS) presence.delete(id);
+  return [...presence.entries()].map(([id, p]) => ({ id, operator: p.operator, path: p.path, mode: p.mode, kind: p.kind || 'human' }));
 }
 
 function broadcastPresence() { broadcast('presence', { viewers: viewers() }); }
 
-function setPresence(id, { operator, path, mode }) {
-  presence.set(id, { operator: operator || '', path: path || null, mode: mode || null, at: new Date().toISOString() });
+function setPresence(id, { operator, path, mode, kind }) {
+  presence.set(id, { operator: operator || '', path: path || null, mode: mode || null, kind: kind || 'human', at: new Date().toISOString() });
   broadcastPresence();
+}
+
+// Explicit removal (used by server-side agents, which have no SSE connection).
+function removePresence(id) {
+  if (presence.delete(id)) broadcastPresence();
 }
 
 // Drop clients that went away without a clean close, so stale viewers disappear.
@@ -41,4 +48,4 @@ setInterval(() => {
   if (presence.size !== before) broadcastPresence();
 }, 15000).unref();
 
-module.exports = { addClient, removeClient, broadcast, broadcastPresence, setPresence, viewers };
+module.exports = { addClient, removeClient, broadcast, broadcastPresence, setPresence, removePresence, viewers };

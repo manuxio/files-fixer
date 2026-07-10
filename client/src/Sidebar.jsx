@@ -16,7 +16,9 @@ export function RiskChip({ risk }) {
 function FileRow({ f, selected, onSelect, isFixed, viewers, checked, onToggle }) {
   const fx = isFixed(f);
   const isSel = selected && selected.absolute_path === f.absolute_path;
-  const editing = viewers && viewers.some((v) => v.mode === 'edit');
+  const humans = (viewers || []).filter((v) => v.kind !== 'agent');
+  const agents = (viewers || []).filter((v) => v.kind === 'agent');
+  const editing = humans.some((v) => v.mode === 'edit');
   return (
     <div
       className={`file ${f.status} ${isSel ? 'selected' : ''} ${fx ? 'fixed' : ''} ${checked ? 'checked' : ''}`}
@@ -30,8 +32,11 @@ function FileRow({ f, selected, onSelect, isFixed, viewers, checked, onToggle })
       <span className={`badge ${f.status}`}>{STATUS_LABEL[f.status]}</span>
       <RiskChip risk={f.risk} />
       <span className="fname">{f.filename}</span>
-      {viewers && viewers.length > 0 && (
-        <span className={`viewer-badge ${editing ? 'on' : ''}`} title={'here now: ' + viewers.map((v) => `${v.operator || 'anon'}${v.mode === 'edit' ? ' (editing)' : ''}`).join(', ')}>👤</span>
+      {humans.length > 0 && (
+        <span className={`viewer-badge ${editing ? 'on' : ''}`} title={'here now: ' + humans.map((v) => `${v.operator || 'anon'}${v.mode === 'edit' ? ' (editing)' : ''}`).join(', ')}>👤</span>
+      )}
+      {agents.length > 0 && (
+        <span className="agent-badge" title={'Claude agent working here: ' + agents.map((v) => v.operator || 'Claude').join(', ')}>✦</span>
       )}
       {fx && <span className="tick">✔</span>}
     </div>
@@ -44,7 +49,7 @@ function PatchedLabel({ p }) {
   return <span className={`patched-label ${cls}`} title={`patched: JCE ${p.status}${p.jce ? ' ' + p.jce : ''}${p.at ? ' @ ' + p.at : ''}`}>&lt;P&gt;</span>;
 }
 
-export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilter, selected, onSelect, isFixed, reloadToken, viewersByPath = {}, patchedMap = {}, onPatch = null, multiSel = {}, onToggleMulti = null }) {
+export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilter, selected, onSelect, isFixed, reloadToken, viewersByPath = {}, patchedMap = {}, agentRuns = {}, onAgents = null, onPatch = null, multiSel = {}, onToggleMulti = null }) {
   const [expanded, setExpanded] = useState({});
   const [browse, setBrowse] = useState({});   // name -> { files, total, offset, loading }
   const [search, setSearch] = useState(null); // { files, total, offset, loading }
@@ -189,12 +194,22 @@ export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilte
         {summary && !dq && sites.map((w) => {
           const isOpen = !!expanded[w.name];
           const page = browse[w.name];
+          const run = agentRuns[w.name];
           return (
             <div className="site" key={w.name}>
               <div className="site-head" onClick={() => toggleSite(w.name)}>
                 <span className="caret">{isOpen ? '▾' : '▸'}</span>
                 <span className="site-name" title={w.name}>{w.name}</span>
                 <PatchedLabel p={patchedMap[w.name]} />
+                {onAgents && (
+                  <button
+                    className={`agent-btn ${run ? 'running' : ''}`}
+                    title={run
+                      ? `${run.agents ? run.agents.length : run.count} Claude agent(s) working — ${run.stopping ? 'stopping…' : 'click to stop'}`
+                      : 'Start Claude automation: agents triage & remediate this site\'s unresolved files'}
+                    onClick={(e) => { e.stopPropagation(); onAgents(w.name); }}
+                  >✦{run ? (run.agents ? run.agents.length : run.count) : ''}</button>
+                )}
                 {onPatch && (
                   <button
                     className="patch-btn" title="Patch JCE to 2.9.99.8"

@@ -5,10 +5,9 @@ const path = require('path');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const config = require('./config');
-const { getDiff, getSummary, queryFiles, applyFixed, sameSha, findFile } = require('./diff');
-const { resolveSide, websiteOf } = require('./paths');
+const { getDiff, getSummary, queryFiles, sameSha, findFile } = require('./diff');
+const { resolveSide } = require('./paths');
 const audit = require('./audit');
-const fixedStore = require('./fixed');
 const events = require('./events');
 const joomla = require('./joomla');
 const patches = require('./patches');
@@ -18,6 +17,8 @@ const classify = require('./classify');
 const knowngood = require('./knowngood');
 const rules = require('./rules');
 const terminal = require('./terminal');
+const actions = require('./actions');
+const agents = require('./agents');
 
 const app = express();
 app.use(express.json({ limit: '25mb' }));
@@ -148,13 +149,7 @@ app.post('/api/delete', async (req, res) => {
     const abs = req.body.path;
     if (!abs) return fail(res, 400, 'path required');
     const actor = requireOperator(req);
-    const full = resolveSide('right', abs);
-    let before;
-    try { before = await fsp.readFile(full); }
-    catch { return fail(res, 404, 'right file not found'); }
-    await fsp.rm(full);
-    const record = await audit.record({ operation: 'delete', absPath: abs, rightPath: full, before, after: null, actor, note: req.body.note });
-    events.broadcast('mutated', { path: abs, website: websiteOf(abs), operation: 'delete', by: actor, at: record.timestamp, clientId: originOf(req) });
+    const record = await actions.deleteRight(abs, actor, { note: req.body.note, clientId: originOf(req) });
     res.json({ ok: true, record });
   } catch (e) { fail(res, 400, e); }
 });
@@ -165,17 +160,7 @@ app.post('/api/overwrite', async (req, res) => {
     const abs = req.body.path;
     if (!abs) return fail(res, 400, 'path required');
     const actor = requireOperator(req);
-    const lp = resolveSide('left', abs);
-    const rp = resolveSide('right', abs);
-    let after;
-    try { after = await fsp.readFile(lp); }
-    catch { return fail(res, 404, 'left source not found'); }
-    let before = null;
-    try { before = await fsp.readFile(rp); } catch { /* right may not exist (restore) */ }
-    await fsp.mkdir(path.dirname(rp), { recursive: true });
-    await fsp.writeFile(rp, after);
-    const record = await audit.record({ operation: 'overwrite', absPath: abs, rightPath: rp, before, after, actor, note: req.body.note, extra: { source_left_path: lp } });
-    events.broadcast('mutated', { path: abs, website: websiteOf(abs), operation: 'overwrite', by: actor, at: record.timestamp, clientId: originOf(req) });
+    const record = await actions.overwriteFromLeft(abs, actor, { note: req.body.note, clientId: originOf(req) });
     res.json({ ok: true, record });
   } catch (e) { fail(res, 400, e); }
 });
@@ -187,14 +172,7 @@ app.post('/api/save', async (req, res) => {
     if (!abs) return fail(res, 400, 'path required');
     if (typeof req.body.content !== 'string') return fail(res, 400, 'content required');
     const actor = requireOperator(req);
-    const rp = resolveSide('right', abs);
-    let before = null;
-    try { before = await fsp.readFile(rp); } catch { /* new file */ }
-    const after = Buffer.from(req.body.content, 'utf8');
-    await fsp.mkdir(path.dirname(rp), { recursive: true });
-    await fsp.writeFile(rp, after);
-    const record = await audit.record({ operation: 'edit', absPath: abs, rightPath: rp, before, after, actor, note: req.body.note });
-    events.broadcast('mutated', { path: abs, website: websiteOf(abs), operation: 'edit', by: actor, at: record.timestamp, clientId: originOf(req) });
+    const record = await actions.saveRight(abs, req.body.content, actor, { note: req.body.note, clientId: originOf(req) });
     res.json({ ok: true, record });
   } catch (e) { fail(res, 400, e); }
 });
@@ -206,13 +184,8 @@ app.post('/api/fixed', async (req, res) => {
     const abs = req.body.path;
     if (!abs) return fail(res, 400, 'path required');
     const actor = requireOperator(req);
-    const fixed = !!req.body.fixed;
-    const at = new Date().toISOString();
-    const val = await fixedStore.set(abs, fixed, actor, at);
-    applyFixed(abs, val);
-    await audit.event({ operation: fixed ? 'mark-fixed' : 'unmark-fixed', absPath: abs, actor, note: req.body.note });
-    events.broadcast('fixed', { path: abs, website: websiteOf(abs), fixed, at: fixed ? at : null, by: fixed ? actor : null, clientId: originOf(req) });
-    res.json({ ok: true, fixed, at: fixed ? at : null, by: fixed ? actor : null });
+    const r = await actions.setFixed(abs, !!req.body.fixed, actor, { note: req.body.note, clientId: originOf(req) });
+    res.json({ ok: true, ...r });
   } catch (e) { fail(res, 400, e); }
 });
 
@@ -362,6 +335,33 @@ app.post('/api/claude/analyze', async (req, res) => {
     const result = await terminal.analyze(abs);
     res.json({ ok: true, ...result });
   } catch (e) { fail(res, e.status || 500, e); }
+});
+
+// --- Claude automation (server-spawned agents) ----------------------------
+// Which websites have agents running (button state) + live counts/stats.
+app.get('/api/agents', (req, res) => {
+  try { res.json(agents.status()); }
+  catch (e) { fail(res, 500, e); }
+});
+
+// Spawn 1..5 agents that work through a website's unresolved changed files.
+app.post('/api/agents/start', async (req, res) => {
+  try {
+    const actor = requireOperator(req);
+    const { website, count } = req.body || {};
+    if (!website) return fail(res, 400, 'website required');
+    res.json({ ok: true, run: await agents.start(website, count, actor) });
+  } catch (e) { fail(res, e.status || 400, e); }
+});
+
+// Stop the website's agents (each finishes its in-flight file first).
+app.post('/api/agents/stop', (req, res) => {
+  try {
+    const actor = requireOperator(req);
+    const website = req.body && req.body.website;
+    if (!website) return fail(res, 400, 'website required');
+    res.json({ ok: true, run: agents.stop(website, actor) });
+  } catch (e) { fail(res, e.status || 400, e); }
 });
 
 // --- static client (production build) ------------------------------------

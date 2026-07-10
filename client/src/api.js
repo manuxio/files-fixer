@@ -45,6 +45,10 @@ export const api = {
   // claude web shell
   claudeStatus: () => j('/api/claude/status'),
   claudeAnalyze: (path) => post('/api/claude/analyze', { path }),
+  // claude automation agents
+  agents: () => j('/api/agents'),
+  agentsStart: (website, count, operator) => post('/api/agents/start', { website, count, operator }),
+  agentsStop: (website, operator) => post('/api/agents/stop', { website, operator }),
   // classifier rules
   rules: () => j('/api/rules'),
   ruleDisable: (id, disabled, operator) => post('/api/rules/disable', { id, disabled, operator }),
