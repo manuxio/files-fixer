@@ -93,4 +93,15 @@ function findFile(id, absPath) {
   return { exists: true, version: id, jcePath: best, matched_segments: bestScore, size: f.size, sha256: f.sha256, content: f.content };
 }
 
-module.exports = { listSources, findFile };
+// Every content sha256 across all available JCE source packages (for the
+// known-good index — a live file matching one of these is pristine JCE).
+function sourceShas() {
+  const out = new Set();
+  for (const s of listSources()) {
+    try { for (const f of index(s.id).files.values()) out.add(f.sha256); }
+    catch { /* skip a package that won't open */ }
+  }
+  return out;
+}
+
+module.exports = { listSources, findFile, sourceShas };

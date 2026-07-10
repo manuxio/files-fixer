@@ -1,10 +1,11 @@
 'use strict';
 const express = require('express');
+const http = require('http');
 const path = require('path');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const config = require('./config');
-const { getDiff, getSummary, queryFiles, applyFixed, sameSha } = require('./diff');
+const { getDiff, getSummary, queryFiles, applyFixed, sameSha, findFile } = require('./diff');
 const { resolveSide, websiteOf } = require('./paths');
 const audit = require('./audit');
 const fixedStore = require('./fixed');
@@ -13,6 +14,10 @@ const joomla = require('./joomla');
 const patches = require('./patches');
 const remediate = require('./remediate');
 const jcesrc = require('./jcesrc');
+const classify = require('./classify');
+const knowngood = require('./knowngood');
+const rules = require('./rules');
+const terminal = require('./terminal');
 
 const app = express();
 app.use(express.json({ limit: '25mb' }));
@@ -97,6 +102,7 @@ app.get('/api/files', async (req, res) => {
       website: req.query.website || undefined,
       status: req.query.status || 'all',
       q: (req.query.q || '').toString(),
+      sort: req.query.sort || undefined,
       offset: Number(req.query.offset) || 0,
       limit: Number(req.query.limit) || 200,
     }));
@@ -123,7 +129,16 @@ app.get('/api/file', async (req, res) => {
     if (!stat.isFile()) return res.json({ exists: false, side, absolute_path: abs, note: 'not a regular file' });
     if (stat.size > MAX_READ) return res.json({ exists: true, tooLarge: true, size: stat.size, side, absolute_path: abs });
     const content = await fsp.readFile(full, 'utf8');
-    res.json({ exists: true, side, absolute_path: abs, size: stat.size, mtime: stat.mtime.toISOString(), content });
+    // Upgrade this file's harmfulness score to the content tier — but only when
+    // we're reading its PRIMARY side (right for added/modified, left for
+    // deleted), so we never score a clean baseline against a tampered hash.
+    const file = findFile(abs);
+    let risk = file ? classify.effectiveRisk(file) : null;
+    if (file) {
+      const primary = file.right ? 'right' : 'left';
+      if (side === primary) risk = classify.scoreContent(file, content);
+    }
+    res.json({ exists: true, side, absolute_path: abs, size: stat.size, mtime: stat.mtime.toISOString(), content, risk });
   } catch (e) { fail(res, 400, e); }
 });
 
@@ -289,6 +304,66 @@ app.get('/api/audit', async (req, res) => {
   catch (e) { fail(res, 500, e); }
 });
 
+// --- classifier rules (live CRUD + persisted) ----------------------------
+// The effective rule set (built-ins ⊕ user rules) + known-good index status.
+app.get('/api/rules', (req, res) => {
+  try { res.json({ ...rules.list(), knowngood: knowngood.status() }); }
+  catch (e) { fail(res, 500, e); }
+});
+
+// Create or update a user rule (also used to override a built-in by id).
+app.post('/api/rules', async (req, res) => {
+  try {
+    const actor = requireOperator(req);
+    const rule = await rules.upsert(req.body && req.body.rule);
+    await audit.event({ operation: 'rule-upsert', absPath: `rule:${rule.id}`, actor, note: rule.name });
+    events.broadcast('rules', { op: 'upsert', id: rule.id, by: actor, clientId: originOf(req) });
+    res.json({ ok: true, rule });
+  } catch (e) { fail(res, e.status || 400, e); }
+});
+
+// Enable/disable a rule (the only way to switch off a built-in).
+app.post('/api/rules/disable', async (req, res) => {
+  try {
+    const actor = requireOperator(req);
+    const { id, disabled } = req.body || {};
+    await rules.setDisabled(id, disabled !== false);
+    await audit.event({ operation: 'rule-disable', absPath: `rule:${id}`, actor, note: String(disabled !== false) });
+    events.broadcast('rules', { op: 'disable', id, by: actor, clientId: originOf(req) });
+    res.json({ ok: true });
+  } catch (e) { fail(res, e.status || 400, e); }
+});
+
+// Delete a user rule (built-ins can only be disabled).
+app.delete('/api/rules/:id', async (req, res) => {
+  try {
+    const actor = requireOperator(req);
+    await rules.remove(req.params.id);
+    await audit.event({ operation: 'rule-delete', absPath: `rule:${req.params.id}`, actor });
+    events.broadcast('rules', { op: 'delete', id: req.params.id, by: actor, clientId: originOf(req) });
+    res.json({ ok: true });
+  } catch (e) { fail(res, e.status || 400, e); }
+});
+
+// --- Claude web shell ----------------------------------------------------
+// Availability + profile list for the in-browser terminal (client connects to
+// the ws at /api/terminal?profile=N once it knows the shell is enabled).
+app.get('/api/claude/status', (req, res) => {
+  try { res.json(terminal.status()); }
+  catch (e) { fail(res, 500, e); }
+});
+
+// One-shot triage of a selected file with `claude -p` in the hardened sandbox.
+// Returns { outcome: keep|delete|left|uncertain, brief_reason, profile, ... }.
+app.post('/api/claude/analyze', async (req, res) => {
+  try {
+    const abs = req.body && req.body.path;
+    if (!abs) return fail(res, 400, 'path required');
+    const result = await terminal.analyze(abs);
+    res.json({ ok: true, ...result });
+  } catch (e) { fail(res, e.status || 500, e); }
+});
+
 // --- static client (production build) ------------------------------------
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
 if (fs.existsSync(clientDist)) {
@@ -296,7 +371,13 @@ if (fs.existsSync(clientDist)) {
   app.get(/^(?!\/api\/).*/, (req, res) => res.sendFile(path.join(clientDist, 'index.html')));
 }
 
-app.listen(config.port, () => {
+rules.load(); // load persisted user rules and apply them to the classifier
+knowngood.build().catch((e) => console.error('[knowngood] build failed:', e.message)); // background sha index
+
+const server = http.createServer(app);
+terminal.attach(server); // Claude web shell PTY on /api/terminal (no-op if disabled)
+
+server.listen(config.port, () => {
   console.log(`[files-fixer] listening on :${config.port}`);
   console.log(`  left   : ${config.leftRoot}   (${config.leftCsv})`);
   console.log(`  right  : ${config.rightRoot}   (${config.rightCsv})`);

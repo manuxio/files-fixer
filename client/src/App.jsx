@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, clientId } from './api.js';
-import { Sidebar } from './Sidebar.jsx';
+import { Sidebar, RiskChip } from './Sidebar.jsx';
 import { CodeView, DiffView } from './Editors.jsx';
+import { RulesModal } from './Rules.jsx';
+import { ClaudeShellModal } from './ClaudeShell.jsx';
 
 const short = (h) => (h ? h.slice(0, 12) : '—');
 const base = (p) => (p ? p.split('/').pop() : '');
@@ -45,6 +47,10 @@ export default function App() {
   const [multiSel, setMultiSel] = useState({}); // path -> file (bulk selection, scoped to one website)
   const [shaPropose, setShaPropose] = useState(null); // { sha, files } — identical files to also mark fixed
   const [history, setHistory] = useState(null);
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const [claudeOpen, setClaudeOpen] = useState(false);
+  const [claudeAsk, setClaudeAsk] = useState(null); // { loading, file, result?, error? } — Ask claude modal
+  const [rulesReload, setRulesReload] = useState(0); // bumps to refetch the rules panel
   const [viewers, setViewers] = useState([]); // live presence from other clients
 
   const [joomlaVersions, setJoomlaVersions] = useState([]);
@@ -122,6 +128,11 @@ export default function App() {
       const d = JSON.parse(e.data);
       setPatchedMap((m) => ({ ...m, [d.website]: { status: d.status, at: d.at, jce: d.jce_after } }));
       if (d.clientId !== clientId) notify(`${d.by || 'someone'}: JCE patch ${d.status} on ${d.website}${d.jce_after ? ' (' + d.jce_after + ')' : ''}`);
+    });
+    es.addEventListener('rules', (e) => {
+      const d = JSON.parse(e.data);
+      setRulesReload((t) => t + 1); // refresh an open rules panel
+      if (d.clientId !== clientId) notify(`${d.by || 'someone'}: ${d.op} rule ${d.id}`);
     });
     es.onerror = () => { /* EventSource reconnects automatically */ };
     return () => es.close();
@@ -286,6 +297,54 @@ export default function App() {
     finally { setBusy(false); }
   };
 
+  // Ask Claude to triage the selected file (claude -p in the hardened sandbox).
+  // Fetch same-checksum siblings in parallel so the modal can offer bulk apply.
+  const askClaude = useCallback(async () => {
+    const file = selectedRef.current;
+    if (!file) return;
+    setClaudeAsk({ loading: true, file });
+    try {
+      const [r, sh] = await Promise.all([
+        api.claudeAnalyze(file.absolute_path),
+        api.sameSha(file.absolute_path).catch(() => ({ sha: null, files: [] })),
+      ]);
+      setClaudeAsk({ loading: false, file, result: r, sha: sh.sha, matches: sh.files || [] });
+    } catch (e) {
+      setClaudeAsk({ loading: false, file, error: String(e.message || e) });
+    }
+  }, []);
+
+  // Act on Claude's proposal — on the selected file plus any same-checksum
+  // siblings the user opted into (matches).
+  const applyProposal = async (outcome, matches) => {
+    if (!selected) return;
+    const files = [selected, ...(matches || [])];
+    if (outcome === 'delete' || outcome === 'left') {
+      const verb = outcome === 'delete' ? 'Delete' : 'Revert (overwrite from left)';
+      const list = files.map((f) => f.absolute_path).slice(0, 8).join('\n');
+      const more = files.length > 8 ? `\n…and ${files.length - 8} more` : '';
+      if (!window.confirm(`${verb} ${files.length} file(s)?\n\n${list}${more}\n\nBackups are written to /evidence.`)) return;
+    }
+    if (!ensureOperator()) return;
+    setClaudeAsk(null);
+    setBusy(true);
+    const note = matches && matches.length ? 'ask-claude (same-sha)' : 'ask-claude';
+    try {
+      if (outcome === 'keep') {
+        await Promise.all(files.map((f) => toggleFixed(f, true)));
+        notify(`Marked ${files.length} file(s) fixed`);
+      } else if (outcome === 'left') {
+        await Promise.all(files.map(async (f) => { await api.overwrite(f.absolute_path, operator, note); await toggleFixed(f, true); }));
+        notify(`Reverted ${files.length} file(s) from left (backed up)`);
+      } else if (outcome === 'delete') {
+        await Promise.all(files.map(async (f) => { await api.del(f.absolute_path, operator, note); await toggleFixed(f, true); }));
+        notify(`Deleted ${files.length} file(s) (backed up)`);
+      }
+      await reloadSelected(selected);
+    } catch (e) { notify(String(e.message || e), 'err'); }
+    finally { setBusy(false); }
+  };
+
   const doSave = async () => {
     if (!selected || !ensureOperator()) return;
     const savedContent = draftRef.current;
@@ -418,6 +477,11 @@ export default function App() {
   }, [selected]);
 
   const selFixed = isFixed(selected);
+  // Best harmfulness score for the open file: the content-tier score from the
+  // read (if present) wins over the manifest-tier score carried in the list.
+  const selRisk = (contents.right && contents.right.risk)
+    || (contents.left && contents.left.risk)
+    || (selected && selected.risk) || null;
 
   return (
     <div className="app" style={{ gridTemplateColumns: `${sidebarWidth}px 5px 1fr` }}>
@@ -459,6 +523,13 @@ export default function App() {
             <input ref={operatorRef} value={operator} onChange={(e) => setOperator(e.target.value)} placeholder="name required" spellCheck={false} />
             {!canEdit && <span className="op-hint">required for changes</span>}
           </label>
+          <button
+            className="btn ghost"
+            disabled={!selected}
+            onClick={() => selected && setClaudeOpen(true)}
+            title={selected ? 'Open a hardened Claude session for this file' : 'Select a file first'}
+          >Claude</button>
+          <button className="btn ghost" onClick={() => setRulesOpen(true)}>Rules</button>
           <button className="btn ghost" onClick={openHistory}>History</button>
           <button className="btn ghost" onClick={() => loadSummary(true)}>Refresh CSVs</button>
         </div>
@@ -490,6 +561,12 @@ export default function App() {
           <>
             <div className="filebar">
               <span className={`badge ${selected.status}`}>{selected.status}</span>
+              {selRisk && (
+                <span className="risk-inline" title="server-computed harmfulness — advisory only">
+                  <RiskChip risk={selRisk} />
+                  <span className={`risk-label band-${selRisk.band}`}>{selRisk.band}</span>
+                </span>
+              )}
               <span className="path" title={selected.absolute_path}>{selected.absolute_path}</span>
               <span className="sha" title="left sha256 → right sha256">
                 {short(sha && sha.left)} → {short(sha && sha.right)}
@@ -500,6 +577,17 @@ export default function App() {
                 </span>
               )}
             </div>
+
+            {selRisk && selRisk.reasons && selRisk.reasons.length > 0 && (
+              <div className="rule-hits" title="classifier rules that fired for this file (server-computed)">
+                <span className="label">matched</span>
+                {selRisk.reasons.map((r) => (
+                  <span key={r.id} className={`hit ${r.weight < 0 ? 'neg' : 'pos'}`} title={r.why || r.name}>
+                    {r.name} <span className="w">({r.weight > 0 ? '+' : ''}{r.weight})</span>
+                  </span>
+                ))}
+              </div>
+            )}
 
             <div className="actions">
               <div className="modes">
@@ -535,6 +623,14 @@ export default function App() {
                 )}
               </div>
               <div className="spacer" />
+              <button
+                className="btn ask-claude"
+                disabled={busy || (claudeAsk && claudeAsk.loading) || !(hasRight || hasLeft)}
+                title="Ask Claude to analyze this file and propose a remediation"
+                onClick={askClaude}
+              >
+                {claudeAsk && claudeAsk.loading ? 'Asking…' : '✦ Ask claude'}
+              </button>
               <button
                 className={`btn fixed-toggle ${selFixed ? 'on' : ''}`}
                 disabled={busy || !canEdit}
@@ -596,6 +692,19 @@ export default function App() {
         <SameShaModal sha={shaPropose.sha} files={shaPropose.files} action={shaPropose.action} onConfirm={doProposedAction} onClose={() => setShaPropose(null)} />
       )}
       {history && <HistoryModal records={history} onClose={() => setHistory(null)} />}
+      {rulesOpen && (
+        <RulesModal
+          operator={operator} canEdit={canEdit} reloadKey={rulesReload}
+          onClose={() => setRulesOpen(false)} notify={notify}
+        />
+      )}
+      {claudeOpen && selected && <ClaudeShellModal file={selected} onClose={() => setClaudeOpen(false)} />}
+      {claudeAsk && (
+        <AnalyzeModal
+          state={claudeAsk} hasRight={hasRight} hasLeft={hasLeft} isFixed={isFixed}
+          onApply={applyProposal} onRetry={askClaude} onClose={() => setClaudeAsk(null)}
+        />
+      )}
       {patchTarget && (
         <PatchModal
           website={patchTarget} form={patchForm} setForm={setPatchForm}
@@ -603,6 +712,107 @@ export default function App() {
           onClose={() => { if (!patchBusy) setPatchTarget(null); }}
         />
       )}
+    </div>
+  );
+}
+
+const OUTCOME_UI = {
+  keep: { label: 'KEEP', cls: 'keep', headline: 'Safe to keep as-is', action: 'Mark fixed', actCls: 'fixed-toggle on' },
+  left: { label: 'REVERT', cls: 'left', headline: 'Revert to the previous version', action: 'Overwrite from left', actCls: 'warn' },
+  delete: { label: 'DELETE', cls: 'delete', headline: 'Malicious — delete it', action: 'Delete right', actCls: 'danger' },
+  uncertain: { label: 'UNCERTAIN', cls: 'uncertain', headline: 'Uncertain — review manually', action: null, actCls: '' },
+};
+
+function AnalyzeModal({ state, hasRight, hasLeft, isFixed, onApply, onRetry, onClose }) {
+  const { loading, file, result, error } = state;
+  const [applyAll, setApplyAll] = useState(false);
+  const name = base(file && file.absolute_path);
+  const ui = result ? (OUTCOME_UI[result.outcome] || OUTCOME_UI.uncertain) : null;
+  const canAct = result && (
+    result.outcome === 'keep'
+    || (result.outcome === 'left' && hasLeft)
+    || (result.outcome === 'delete' && hasRight)
+  );
+  // Same-checksum siblings the proposed action can apply to.
+  const applicable = (result && ui && ui.action ? (state.matches || []) : []).filter((m) => {
+    if (m.absolute_path === (file && file.absolute_path)) return false;
+    if (result.outcome === 'delete') return m.status !== 'deleted';
+    if (result.outcome === 'left') return m.status === 'modified'; // needs a left baseline to revert to
+    if (result.outcome === 'keep') return !isFixed(m);
+    return false;
+  });
+  const nExtra = applyAll ? applicable.length : 0;
+  return (
+    <div className="modal-backdrop" onClick={() => { if (!loading) onClose(); }}>
+      <div className="modal small" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>✦ Ask Claude · {name}</h3>
+          <button className="btn ghost" disabled={loading} onClick={onClose}>Close</button>
+        </div>
+        <div className="modal-body pad">
+          {loading && (
+            <div className="analyze-loading">
+              <span className="spinner" />
+              <div>
+                <div>Analyzing <code>current</code> vs <code>previous</code> in a hardened sandbox…</div>
+                <div className="muted small">Running <code>claude -p</code> on a random account — this can take up to a minute.</div>
+              </div>
+            </div>
+          )}
+
+          {!loading && error && (
+            <>
+              <div className="banner err">{error}</div>
+              <div className="muted small">
+                {/limit|unavailable|429/i.test(error)
+                  ? 'Every account was tried and none were available. Try again later, or open the shell to check /login.'
+                  : 'The analysis could not complete.'}
+              </div>
+              <div className="analyze-actions">
+                <button className="btn ghost" onClick={onClose}>Close</button>
+                <button className="btn" onClick={onRetry}>Retry</button>
+              </div>
+            </>
+          )}
+
+          {!loading && result && (
+            <>
+              <div className={`analyze-verdict ${ui.cls}`}>
+                <span className="analyze-badge">{ui.label}</span>
+                <span className="analyze-headline">{ui.headline}</span>
+              </div>
+              <p className="analyze-reason">{result.brief_reason || '(no reason given)'}</p>
+
+              {ui.action && applicable.length > 0 && (
+                <label className="analyze-samesha">
+                  <input type="checkbox" checked={applyAll} onChange={(e) => setApplyAll(e.target.checked)} />
+                  <span>
+                    Apply the same action to <b>{applicable.length}</b> other file{applicable.length === 1 ? '' : 's'} with the same checksum
+                    {state.sha ? <span className="muted"> · sha {String(state.sha).slice(0, 10)}</span> : null}
+                  </span>
+                </label>
+              )}
+
+              <div className="muted small">
+                Answered by account #{result.profile}. Claude ran locked to a throwaway sandbox on copies only — no live files were touched.
+              </div>
+              <div className="analyze-actions">
+                <button className="btn ghost" onClick={onClose}>Dismiss</button>
+                {ui.action && (
+                  <button
+                    className={`btn ${ui.actCls}`}
+                    disabled={!canAct}
+                    title={canAct ? `Apply Claude's proposal: ${ui.action}` : 'Proposed action is not available for this file'}
+                    onClick={() => onApply(result.outcome, applyAll ? applicable : [])}
+                  >
+                    {ui.action}{nExtra ? ` · ${nExtra + 1} files` : ''}
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

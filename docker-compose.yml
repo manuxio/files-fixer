@@ -17,6 +17,19 @@ services:
       CSV_PATH_PREFIX: /mnt/data
       # Pristine Joomla sources (one subfolder per version) for core-file diffs:
       JOOMLA_ROOT: /joomla
+      # Claude web shell: N isolated profile dirs live under this root (persisted
+      # via the volume below). Set CLAUDE_SHELL: "0" to disable the shell.
+      CLAUDE_PROFILES_ROOT: /claude-profiles
+      CLAUDE_PROFILE_COUNT: "3"
+      # Auto-close a shell session after this many ms with no keystrokes (0=never).
+      CLAUDE_SHELL_IDLE_MS: "${CLAUDE_SHELL_IDLE_MS:-300000}"
+    # The web shell already sandboxes each session (throwaway dir + permission
+    # deny-rules). To ALSO enable Claude's bubblewrap OS sandbox for bash, bwrap
+    # needs unprivileged user namespaces — uncomment to relax the container's
+    # syscall filter so it can run (weakens the container's own isolation):
+    # security_opt:
+    #   - seccomp:unconfined
+    #   - apparmor:unconfined
     volumes:
       # left is the trusted source — mount read-only so it can never be touched
       - ./sample/left:/left:ro
@@ -28,5 +41,8 @@ services:
       #   JOOMLA_SRC=/path/to/joomla-sources docker compose up -d
       # (folder must hold one subfolder per version, e.g. Joomla-3.9.21/)
       - ${JOOMLA_SRC:-./sample/joomla}:/joomla:ro
+      # Claude profiles (#1/#2/#3): persist logins + config across restarts.
+      # Each `claude` run (CLI or web shell) picks one of these subdirs.
+      - ./claude-profiles:/claude-profiles
     # For a real investigation, replace the ./sample/* host paths above with
     # your evidence/data mounts. left stays :ro, right and evidence stay writable.

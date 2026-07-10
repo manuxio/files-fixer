@@ -4,6 +4,15 @@ import { api } from './api.js';
 const STATUS_LABEL = { added: 'A', modified: 'M', deleted: 'D' };
 const LIMIT = 200;
 
+// Harmfulness score badge (0–100), coloured by band. Advisory — a tooltip lists
+// the rules that fired so the reviewer can judge the suggestion.
+export function RiskChip({ risk }) {
+  if (!risk) return null;
+  const title = `harmfulness ${risk.score}/100 · ${risk.band} (${risk.tier})`
+    + (risk.reasons && risk.reasons.length ? '\n' + risk.reasons.map((r) => `• ${r.name} (${r.weight > 0 ? '+' : ''}${r.weight})`).join('\n') : '');
+  return <span className={`risk-chip band-${risk.band}`} title={title}>{risk.score}</span>;
+}
+
 function FileRow({ f, selected, onSelect, isFixed, viewers, checked, onToggle }) {
   const fx = isFixed(f);
   const isSel = selected && selected.absolute_path === f.absolute_path;
@@ -19,6 +28,7 @@ function FileRow({ f, selected, onSelect, isFixed, viewers, checked, onToggle })
         onClick={(e) => e.stopPropagation()} onChange={() => onToggle && onToggle(f)}
       />
       <span className={`badge ${f.status}`}>{STATUS_LABEL[f.status]}</span>
+      <RiskChip risk={f.risk} />
       <span className="fname">{f.filename}</span>
       {viewers && viewers.length > 0 && (
         <span className={`viewer-badge ${editing ? 'on' : ''}`} title={'here now: ' + viewers.map((v) => `${v.operator || 'anon'}${v.mode === 'edit' ? ' (editing)' : ''}`).join(', ')}>👤</span>
@@ -39,6 +49,7 @@ export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilte
   const [browse, setBrowse] = useState({});   // name -> { files, total, offset, loading }
   const [search, setSearch] = useState(null); // { files, total, offset, loading }
   const [dq, setDq] = useState('');           // debounced query
+  const [sort, setSort] = useState('risk');   // 'risk' (harmful first) | 'name'
 
   // debounce the search box
   useEffect(() => {
@@ -46,24 +57,24 @@ export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilte
     return () => clearTimeout(t);
   }, [query]);
 
-  // invalidate loaded pages when the status filter or dataset changes
-  useEffect(() => { setBrowse({}); }, [statusFilter, reloadToken]);
+  // invalidate loaded pages when the status filter, sort, or dataset changes
+  useEffect(() => { setBrowse({}); }, [statusFilter, sort, reloadToken]);
 
   // search across all websites (paged), grouped by website in render
   useEffect(() => {
     if (!dq) { setSearch(null); return undefined; }
     let alive = true;
     setSearch({ files: [], total: 0, offset: 0, loading: true });
-    api.files({ q: dq, status: statusFilter, offset: 0, limit: LIMIT })
+    api.files({ q: dq, status: statusFilter, sort, offset: 0, limit: LIMIT })
       .then((r) => { if (alive) setSearch({ files: r.files, total: r.total, offset: r.files.length, loading: false }); })
       .catch(() => { if (alive) setSearch({ files: [], total: 0, offset: 0, loading: false }); });
     return () => { alive = false; };
-  }, [dq, statusFilter, reloadToken]);
+  }, [dq, statusFilter, sort, reloadToken]);
 
   const ensureBrowse = (name) => {
     setBrowse((prev) => {
       if (prev[name]) return prev;
-      api.files({ website: name, status: statusFilter, offset: 0, limit: LIMIT })
+      api.files({ website: name, status: statusFilter, sort, offset: 0, limit: LIMIT })
         .then((r) => setBrowse((b) => ({ ...b, [name]: { files: r.files, total: r.total, offset: r.files.length, loading: false } })))
         .catch(() => setBrowse((b) => ({ ...b, [name]: { files: [], total: 0, offset: 0, loading: false } })));
       return { ...prev, [name]: { files: [], total: 0, offset: 0, loading: true } };
@@ -80,14 +91,14 @@ export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilte
     const cur = browse[name];
     if (!cur || cur.loading) return;
     setBrowse((b) => ({ ...b, [name]: { ...cur, loading: true } }));
-    api.files({ website: name, status: statusFilter, offset: cur.offset, limit: LIMIT })
+    api.files({ website: name, status: statusFilter, sort, offset: cur.offset, limit: LIMIT })
       .then((r) => setBrowse((b) => ({ ...b, [name]: { files: [...cur.files, ...r.files], total: r.total, offset: cur.offset + r.files.length, loading: false } })));
   };
 
   const loadMoreSearch = () => {
     if (!search || search.loading) return;
     setSearch((s) => ({ ...s, loading: true }));
-    api.files({ q: dq, status: statusFilter, offset: search.offset, limit: LIMIT })
+    api.files({ q: dq, status: statusFilter, sort, offset: search.offset, limit: LIMIT })
       .then((r) => setSearch((s) => ({ files: [...s.files, ...r.files], total: r.total, offset: s.offset + r.files.length, loading: false })));
   };
 
@@ -138,6 +149,12 @@ export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilte
             {s}{summary && s !== 'all' ? ` ${summary.totals[s]}` : ''}
           </button>
         ))}
+      </div>
+
+      <div className="sort-row">
+        <span className="sort-label">sort</span>
+        <button className={`chip ${sort === 'risk' ? 'active' : ''}`} onClick={() => setSort('risk')} title="Most harmful first (server-scored)">⚠ risk</button>
+        <button className={`chip ${sort === 'name' ? 'active' : ''}`} onClick={() => setSort('name')} title="Alphabetical by path">name</button>
       </div>
 
       <div className="tree">

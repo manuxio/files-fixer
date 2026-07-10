@@ -3,6 +3,8 @@ client/node_modules/
 client/dist/
 .env
 *.log
+# Claude web-shell profile dirs (contain logins/credentials — never commit)
+/claude-profiles/
 # generated / large evidence data
 /left.csv
 /right.csv

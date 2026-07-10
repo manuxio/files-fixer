@@ -14,10 +14,14 @@ services:
       RIGHT_CSV: /evidence/right.csv
       CSV_PATH_PREFIX: /mnt/data
       JOOMLA_ROOT: /joomla
+      CLAUDE_PROFILES_ROOT: /claude-profiles
+      CLAUDE_PROFILE_COUNT: "3"
     volumes:
       - ./sample/left:/left:ro
       - ./sample/right:/right
       - ./sample/evidence:/evidence
       - ${JOOMLA_SRC:-./sample/joomla}:/joomla:ro
+      # Claude profiles (#1/#2/#3): persist logins + config across restarts.
+      - ./claude-profiles:/claude-profiles
     # For a real investigation, replace the ./sample/* host paths with your
     # evidence/data mounts. Keep left read-only; right and evidence writable.

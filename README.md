@@ -16,6 +16,7 @@ fix the **right** side — with every disruptive action backed up and logged to
 - **JCE core diff**: for a file belonging to the JCE editor, **vs JCE** diffs it against the pristine JCE package the dropper installs (full 2.9.99.8 or the security patch) — extracted in-memory and matched by path — to spot code injected into JCE's own files.
 - **Patch JCE (com_jce)**: one-click remediation of the vulnerable JCE editor — temporarily drops a token-gated remediation tool + the JCE 2.9.99.8 packages into a site's docroot, drives it over HTTP/HTTPS (optional Basic Auth), then removes them. Records each run in a persisted `patches.csv`, notifies other operators, and shows a `<patched>` label on the site root.
 - **Bulk actions**: multi-select files within one website (checkboxes) to **mark fixed** or **delete** in one go.
+- **Claude web shell**: the container ships the [Claude Code](https://www.npmjs.com/package/@anthropic-ai/claude-code) CLI and an in-browser terminal (**Claude** button, top bar). Pick one of **3 isolated profiles** (separate logins/config) and drive a real interactive Claude session against the site being remediated. The same profile picker works from the CLI (`claude` prompts for a profile).
 
 ---
 
@@ -132,6 +133,95 @@ JOOMLA_ROOT=./sample/joomla ./scripts/fetch-joomla.sh 3.9.21 3.10.12 4.4.4 5.2.6
 > are mounted, so you ship only the versions you actually need. The bundled demo
 > ships two tiny stub versions (`3.9.21`, `3.10.11`) so the feature works out of
 > the box.
+
+---
+
+## Claude web shell & CLI profiles
+
+The image bundles the **Claude Code** CLI plus **3 isolated profiles**. A profile
+is just a separate `CLAUDE_CONFIG_DIR` — its own login, settings and history —
+so you can keep e.g. three different accounts/keys side by side. They live under
+`/claude-profiles/{1,2,3}`, persisted to a host volume so logins survive
+restarts.
+
+**From the web UI:** select a changed file, then click **Claude** in the top bar
+(the button is disabled until a file is selected) and pick profile **#1/#2/#3**.
+An interactive Claude Code session opens in the browser (a real terminal via
+WebSocket + PTY), **hardened into a disposable per-file sandbox**:
+
+- Claude runs in a fresh **throwaway directory** created *outside* the data
+  mounts (under `/tmp/claude-shell/…`), so traversing "up" never reaches `/left`
+  or `/right`. The directory is **destroyed when the shell closes**.
+- The selected file is copied in as **`current.<ext>`** (the right-side, possibly
+  compromised version) and the baseline as **`previous.<ext>`** (the left-side
+  version) — whichever exist. Those are the *only* files in the dir.
+- Two guardrails are handed to Claude and are **mandatory**: (1) never leave the
+  directory, (2) never touch any file other than `current.*` / `previous.*`. They
+  are enforced two ways — a strict `--settings` **permission ruleset** (allows
+  only `current.*`/`previous.*`; denies `../` traversal, the real data mounts,
+  credentials, app source and system trees, plus `WebFetch`/`WebSearch` and
+  network shell tools; immutable for the session) **and** an appended system
+  prompt. When the
+  container permits it, Claude's OS-level command sandbox (**bubblewrap**) is also
+  engaged (see below).
+- The **"trust this folder?"** dialog is auto-accepted for the throwaway dir
+  (`hasTrustDialogAccepted` is pre-seeded in the profile config) so the session
+  opens straight to the prompt — safe because the dir holds only `current.*` /
+  `previous.*`, none of the project config (`CLAUDE.md`, hooks, `.claude/`) that
+  trust guards against. Set `CLAUDE_SHELL_AUTOTRUST=0` to show the dialog instead.
+
+Each profile runs **one session at a time** (two sessions sharing a config dir
+would corrupt each other's history/state), and the picker hands them out
+**round-robin** — "Open next profile" rotates #1 → #2 → #3. A profile already in
+use shows as *in use* and is disabled; trying to grab it bounces you to the next
+free one.
+
+> The **CLI** shell (`docker compose exec … claude`) is *not* sandboxed this way —
+> it's the full CLI for interactive use. The per-file sandbox applies to the
+> **web** shell, which is the untrusted-facing surface.
+
+**From the CLI** (`docker compose exec files-fixer claude`): the `claude`
+command prompts for a profile every time. You can also skip the prompt:
+
+```bash
+docker compose exec files-fixer claude 2            # profile #2, interactive
+docker compose exec files-fixer claude --profile 3 -p "summarise the diff"
+```
+
+**First run of a profile:** it isn't logged in yet — run `/login` inside the
+session (or set `ANTHROPIC_API_KEY`). Credentials are written into that profile's
+dir under the mounted volume, so you only do it once.
+
+| Var                     | Default            | Meaning |
+|-------------------------|--------------------|---------|
+| `CLAUDE_SHELL`          | `1`                | set `0` to disable the web-shell endpoint |
+| `CLAUDE_PROFILES_ROOT`  | `/claude-profiles` | root holding the per-profile config dirs |
+| `CLAUDE_PROFILE_COUNT`  | `3`                | number of selectable profiles |
+| `CLAUDE_SHELL_SANDBOX`  | `/tmp/claude-shell`| root for the throwaway per-session dirs |
+| `CLAUDE_SHELL_OS_SANDBOX` | `1`              | also use Claude's bubblewrap sandbox when available (`0` = deny-rules only) |
+
+### OS-level command sandbox (bubblewrap)
+
+The image installs `bubblewrap` + `socat`, and the server **probes at runtime**
+whether bwrap actually works (it needs unprivileged **user namespaces**, which
+Docker often blocks by default). When it works, Claude's bash commands are
+confined at the OS level too and network is denied; when it doesn't, the shell
+falls back to the (still-enforced) permission deny-rules — check `osSandbox` in
+`GET /api/claude/status`. To let bubblewrap run, relax the container's syscall
+filter in `docker-compose.yml` (this weakens the *container's* own isolation, so
+it's opt-in):
+
+```yaml
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+```
+
+> ⚠️ The web shell grants interactive Claude access to whoever can reach the app —
+> it inherits the app's no-auth posture. The per-file sandbox limits what a
+> session can reach, but keep the port private / behind your own auth anyway, and
+> mount `/claude-profiles` somewhere **not** committed to git (it holds
+> credentials; already in `.gitignore`).
 
 ---
 

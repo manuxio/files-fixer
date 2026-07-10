@@ -16,11 +16,12 @@ const post = (url, body) =>
 export const api = {
   health: () => j('/api/health'),
   summary: (refresh) => j('/api/summary' + (refresh ? '?refresh=1' : '')),
-  files: ({ website, status, q, offset = 0, limit = 200 } = {}) => {
+  files: ({ website, status, q, sort, offset = 0, limit = 200 } = {}) => {
     const p = new URLSearchParams();
     if (website) p.set('website', website);
     if (status && status !== 'all') p.set('status', status);
     if (q) p.set('q', q);
+    if (sort) p.set('sort', sort);
     p.set('offset', offset);
     p.set('limit', limit);
     return j('/api/files?' + p.toString());
@@ -41,4 +42,13 @@ export const api = {
   patchJce: ({ website, baseUrl, ip, basicUser, basicPass, operator }) =>
     post('/api/patch-jce', { website, baseUrl, ip, basicUser, basicPass, operator }),
   audit: () => j('/api/audit'),
+  // claude web shell
+  claudeStatus: () => j('/api/claude/status'),
+  claudeAnalyze: (path) => post('/api/claude/analyze', { path }),
+  // classifier rules
+  rules: () => j('/api/rules'),
+  ruleDisable: (id, disabled, operator) => post('/api/rules/disable', { id, disabled, operator }),
+  ruleUpsert: (rule, operator) => post('/api/rules', { rule, operator }),
+  ruleDelete: (id, operator) =>
+    j('/api/rules/' + encodeURIComponent(id), { method: 'DELETE', headers: { 'x-operator': operator || '' } }),
 };

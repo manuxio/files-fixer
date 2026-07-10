@@ -4,6 +4,7 @@ const { parse } = require('csv-parse');
 const config = require('./config');
 const { websiteOf } = require('./paths');
 const fixedStore = require('./fixed');
+const classify = require('./classify');
 
 let cache = null;      // last computed result (websites + counts + files)
 let allFiles = [];     // flat list of every changed file (refs shared with cache)
@@ -86,10 +87,17 @@ async function computeDiff() {
     .map((w) => {
       const files = [...w.added, ...w.modified, ...w.deleted]
         .map(overlayFixed)
+        .map((f) => { f.riskBase = classify.scoreManifest(f); return f; })
         .sort((a, b) => a.absolute_path.localeCompare(b.absolute_path));
       // A fixed file counts ONLY as fixed, not in its added/modified/deleted bucket.
-      const counts = { added: 0, modified: 0, deleted: 0, unchanged: w.unchanged, fixed: 0 };
-      for (const f of files) { if (f.fixed) counts.fixed += 1; else counts[f.status] += 1; }
+      // riskMax = highest score among still-open findings (drives a site indicator).
+      const counts = { added: 0, modified: 0, deleted: 0, unchanged: w.unchanged, fixed: 0, riskMax: 0 };
+      for (const f of files) {
+        if (f.fixed) { counts.fixed += 1; continue; }
+        counts[f.status] += 1;
+        const s = (f.riskBase && f.riskBase.score) || 0;
+        if (s > counts.riskMax) counts.riskMax = s;
+      }
       return { name: w.name, counts, files };
     })
     // Surface websites with any change (still show fully-fixed sites).
@@ -167,8 +175,9 @@ async function getSummary(refresh = false) {
 }
 
 // Paged file query. Scope to one website, or search across all (when `website`
-// is omitted). Filters by status and a case-insensitive substring `q`.
-async function queryFiles({ website, status, q, offset = 0, limit = 200 } = {}) {
+// is omitted). Filters by status and a case-insensitive substring `q`. `sort`
+// can be 'risk' (harmfulness desc) or defaults to path order.
+async function queryFiles({ website, status, q, sort, offset = 0, limit = 200 } = {}) {
   await getDiff();
   let files;
   if (website) {
@@ -185,10 +194,22 @@ async function queryFiles({ website, status, q, offset = 0, limit = 200 } = {}) 
       f.absolute_path.toLowerCase().includes(s) ||
       f.website.toLowerCase().includes(s));
   }
+  if (sort === 'risk') {
+    files = [...files].sort((a, b) =>
+      classify.effectiveRisk(b).score - classify.effectiveRisk(a).score ||
+      a.absolute_path.localeCompare(b.absolute_path));
+  }
   const total = files.length;
   const off = Math.max(0, offset | 0);
   const lim = Math.min(Math.max(1, limit | 0), 1000);
-  return { total, offset: off, limit: lim, files: files.slice(off, off + lim) };
+  // Attach the current best (manifest- or content-tier) score to the page only.
+  const page = files.slice(off, off + lim).map((f) => ({ ...f, risk: classify.effectiveRisk(f) }));
+  return { total, offset: off, limit: lim, files: page };
+}
+
+// Look up a changed-file entry by its absolute path (for content classification).
+function findFile(absPath) {
+  return allFiles.find((f) => f.absolute_path === absPath) || null;
 }
 
 // Content checksum of a changed file: the right (live) sha when present,
@@ -206,4 +227,4 @@ function sameSha(absPath) {
   return { sha, files };
 }
 
-module.exports = { getDiff, getSummary, queryFiles, applyFixed, sameSha };
+module.exports = { getDiff, getSummary, queryFiles, applyFixed, sameSha, findFile };

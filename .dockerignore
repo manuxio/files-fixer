@@ -8,4 +8,5 @@ right
 *.csv
 .git
 .env
+claude-profiles
 npm-debug.log*
