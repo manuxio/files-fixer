@@ -207,6 +207,7 @@ async function agentLoop(run, agent) {
           // run cleanly instead of retrying — surface why.
           run.stopping = true;
           run.stopReason = 'all Claude accounts unavailable (usage limits) — automation stopped';
+          run.stopKind = 'limit';
           console.error(`[agents] ${run.website}: ${e.message}`);
         } else {
           run.stats.errors += 1;
@@ -222,6 +223,10 @@ async function agentLoop(run, agent) {
       broadcastRun(run, 'progress');
       if (agent.consecErrors >= MAX_CONSECUTIVE_ERRORS) {
         console.error(`[agents] ${agent.name} quitting after ${agent.consecErrors} consecutive errors`);
+        if (!run.stopReason) {
+          run.stopReason = `an agent stopped after ${MAX_CONSECUTIVE_ERRORS} consecutive errors`;
+          run.stopKind = 'error';
+        }
         break;
       }
       await new Promise((r) => setImmediate(r)); // yield between files
@@ -237,13 +242,14 @@ async function agentLoop(run, agent) {
 function finishRun(run) {
   runs.delete(run.website);
   const s = run.stats;
+  const kind = run.stopKind || 'completed'; // completed | stopped | limit | error
   const reason = run.stopReason
     || (run.stopping ? 'stopped by operator' : 'finished — no unresolved files left to process');
   const summary = `${reason} · processed ${s.processed} (safe ${s.safeFixed}, keep ${s.kept}, revert ${s.reverted}, delete ${s.deleted}) · needs review ${s.uncertain} · errors ${s.errors}`;
   console.log(`[agents] ${run.website}: ${summary}`);
   audit.event({ operation: 'agents-stop', absPath: auditPath(run.website), actor: run.by, note: summary })
     .catch((e) => console.error('[agents] audit failed:', e.message));
-  events.broadcast('agents', { op: 'stopped', website: run.website, reason, stats: s, by: run.by });
+  events.broadcast('agents', { op: 'stopped', website: run.website, reason, kind, stats: s, by: run.by });
 }
 
 // --- lifecycle ---------------------------------------------------------------
@@ -271,6 +277,7 @@ async function start(website, count, operator) {
     startedAt: new Date().toISOString(),
     stopping: false,
     stopReason: null,
+    stopKind: null, // completed | stopped | limit | error (set when the run ends)
     agents: new Map(),
     done: new Set(), // paths this run already handled (incl. uncertain/errors) — never re-claimed
     stats: { processed: 0, safeFixed: 0, kept: 0, reverted: 0, deleted: 0, uncertain: 0, skipped: 0, errors: 0 },
@@ -295,6 +302,7 @@ function stop(website, operator) {
   if (!run) { const e = new Error(`no automation running on ${website}`); e.status = 404; throw e; }
   run.stopping = true;
   run.stopReason = `stopped by ${operator}`;
+  run.stopKind = 'stopped';
   broadcastRun(run, 'progress'); // clients show "stopping…" until in-flight files finish
   return statusOf(run);
 }

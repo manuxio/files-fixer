@@ -448,6 +448,11 @@ button, input { font-family: inherit; }
   margin: 4px 0 0; padding: 10px 12px; border-radius: 8px; font-size: 13px; line-height: 1.5;
   background: var(--panel-2); border: 1px solid var(--border);
 }
+.agent-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0 4px; }
+.agent-stat { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 6px; text-align: center; }
+.agent-stat .n { display: block; font-size: 18px; font-weight: 700; color: var(--text); }
+.agent-stat .l { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .3px; color: var(--muted); margin-top: 2px; }
+
 .analyze-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 6px; }
 .analyze-samesha {
   display: flex; align-items: flex-start; gap: 8px; margin-top: 10px; padding: 9px 11px;

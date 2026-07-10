@@ -69,6 +69,7 @@ export default function App() {
   const [agentsEnabled, setAgentsEnabled] = useState(false); // Claude automation available on the server?
   const [agentTarget, setAgentTarget] = useState(null); // website name -> opens the "how many agents" dialog
   const [agentBusy, setAgentBusy] = useState(false);
+  const [agentDone, setAgentDone] = useState([]); // queue of finished-pool notices -> popup
 
   const [jceAvailable, setJceAvailable] = useState(false);
   const [patchedMap, setPatchedMap] = useState({});   // website -> { status, at, jce }
@@ -186,7 +187,9 @@ export default function App() {
       });
       if (d.op === 'started') notify(`${d.by || 'someone'} started ${d.count} Claude agent(s) on ${d.website}`);
       if (d.op === 'stopped') {
-        notify(`✦ ${d.website}: ${d.reason}`, /unavailable|error/i.test(d.reason) ? 'err' : 'ok');
+        // A pool finished for ANY reason (completed / stopped / limit / error):
+        // queue a popup so it's never silent. scheduleSummaryRefresh reconciles counts.
+        setAgentDone((q) => [...q, { website: d.website, reason: d.reason, kind: d.kind, stats: d.stats || {}, by: d.by }]);
         scheduleSummaryRefresh();
       }
     });
@@ -831,6 +834,12 @@ export default function App() {
           onClose={() => { if (!agentBusy) setAgentTarget(null); }}
         />
       )}
+      {agentDone.length > 0 && (
+        <AgentsDoneModal
+          notice={agentDone[0]} remaining={agentDone.length - 1}
+          onClose={() => setAgentDone((q) => q.slice(1))}
+        />
+      )}
       {patchTarget && (
         <PatchModal
           website={patchTarget} form={patchForm} setForm={setPatchForm}
@@ -978,6 +987,59 @@ function AgentsModal({ website, busy, onStart, onClose }) {
           <button className="btn primary" disabled={busy} onClick={() => onStart(count)}>
             {busy ? 'Starting…' : `Start ${count} agent${count === 1 ? '' : 's'}`}
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const AGENT_DONE_UI = {
+  completed: { badge: 'DONE', cls: 'keep', headline: 'Automation finished — no work left' },
+  stopped: { badge: 'STOPPED', cls: 'left', headline: 'Automation stopped' },
+  limit: { badge: 'LIMITS', cls: 'delete', headline: 'Stopped — Claude usage limits reached' },
+  error: { badge: 'ERRORS', cls: 'delete', headline: 'Stopped — repeated errors' },
+};
+
+// Popup shown when an agent pool ends, for ANY reason. One at a time; dismissing
+// reveals the next queued notice.
+function AgentsDoneModal({ notice, remaining, onClose }) {
+  const ui = AGENT_DONE_UI[notice.kind] || AGENT_DONE_UI.completed;
+  const s = notice.stats || {};
+  const Stat = ({ label, val }) => (
+    <div className="agent-stat"><span className="n">{val || 0}</span><span className="l">{label}</span></div>
+  );
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal small" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>✦ Claude automation · {notice.website}</h3>
+          <button className="btn ghost" onClick={onClose}>Close</button>
+        </div>
+        <div className="modal-body pad">
+          <div className={`analyze-verdict ${ui.cls}`}>
+            <span className="analyze-badge">{ui.badge}</span>
+            <span className="analyze-headline">{ui.headline}</span>
+          </div>
+          <p className="analyze-reason">{notice.reason}</p>
+          <div className="agent-stats">
+            <Stat label="processed" val={s.processed} />
+            <Stat label="safe-fixed" val={s.safeFixed} />
+            <Stat label="kept" val={s.kept} />
+            <Stat label="reverted" val={s.reverted} />
+            <Stat label="deleted" val={s.deleted} />
+            <Stat label="needs review" val={s.uncertain} />
+            <Stat label="errors" val={s.errors} />
+          </div>
+          {notice.kind === 'limit' && (
+            <div className="muted small">Agents share the logged-in Claude accounts. Log in more profiles (open the Claude shell → <code>/login</code> on #2/#3) or run fewer agents so they don't exhaust one account's rate limit.</div>
+          )}
+          {notice.kind === 'error' && s.errors > 0 && (
+            <div className="muted small">Check the server log (<code>docker compose logs -f</code>) for the failing files.</div>
+          )}
+        </div>
+        <div className="modal-foot">
+          <span className="muted">{remaining > 0 ? `${remaining} more notification${remaining === 1 ? '' : 's'}` : (notice.by ? `run by ${notice.by}` : '')}</span>
+          <button className="btn primary" onClick={onClose}>Dismiss</button>
         </div>
       </div>
     </div>
