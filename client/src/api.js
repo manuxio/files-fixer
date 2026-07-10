@@ -42,6 +42,9 @@ export const api = {
   patchJce: ({ website, baseUrl, ip, basicUser, basicPass, operator }) =>
     post('/api/patch-jce', { website, baseUrl, ip, basicUser, basicPass, operator }),
   audit: () => j('/api/audit'),
+  // restore / undo from a backup snapshot
+  backups: (limit) => j('/api/backups' + (limit ? '?limit=' + limit : '')),
+  restore: (backup, operator, note) => post('/api/restore', { backup, operator, note }),
   // claude web shell
   claudeStatus: () => j('/api/claude/status'),
   claudeUsage: () => j('/api/claude/usage'),

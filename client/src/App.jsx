@@ -47,6 +47,8 @@ export default function App() {
   const [multiSel, setMultiSel] = useState({}); // path -> file (bulk selection, scoped to one website)
   const [shaPropose, setShaPropose] = useState(null); // { sha, files } — identical files to also mark fixed
   const [history, setHistory] = useState(null);
+  const [backups, setBackups] = useState(null);   // null = closed; array = Backups modal open
+  const [backupBusy, setBackupBusy] = useState(''); // name of the backup currently being restored
   const [rulesOpen, setRulesOpen] = useState(false);
   const [claudeOpen, setClaudeOpen] = useState(false);
   const [claudeAsk, setClaudeAsk] = useState(null); // { loading, file, result?, error? } — Ask claude modal
@@ -471,6 +473,34 @@ export default function App() {
     catch (e) { notify(String(e.message || e), 'err'); }
   };
 
+  const openBackups = async () => {
+    try { setBackups((await api.backups()).backups || []); }
+    catch (e) { notify(String(e.message || e), 'err'); }
+  };
+
+  // Revert one backup snapshot to the file's pre-operation state. The server
+  // writes a fresh 'restore' record (itself undoable) and broadcasts 'mutated'.
+  const doRestore = async (b) => {
+    if (!ensureOperator()) return;
+    const willDelete = b.undo === 'delete-file';
+    const effect = willDelete
+      ? 'DELETE the current right-side file (the operation had created it)'
+      : `restore the right-side file to its content before the ${b.operation}`;
+    if (!window.confirm(`Restore this backup?\n\n${b.operation} · ${b.absolute_path}\n${b.timestamp || ''}\n\nThis will ${effect}.\nThe restore is itself backed up to /evidence, so it can be undone too.`)) return;
+    setBackupBusy(b.name);
+    try {
+      const r = await api.restore(b.name, operator, 'restore via UI');
+      if (r.unfixed) setFixedOverride((o) => ({ ...o, [b.absolute_path]: false }));
+      notify(`${r.result === 'deleted' ? 'Removed' : 'Restored'}: ${base(b.absolute_path)} (undo of ${b.operation})${r.unfixed ? ' · unmarked fixed' : ''}`);
+      const list = await api.backups().then((x) => x.backups || []).catch(() => null);
+      if (list) setBackups(list); // the new restore snapshot now shows at the top
+      const cur = selectedRef.current;
+      if (cur && cur.absolute_path === b.absolute_path) await reloadSelected(cur);
+      scheduleSummaryRefresh();
+    } catch (e) { notify(String(e.message || e), 'err'); }
+    finally { setBackupBusy(''); }
+  };
+
   // The sidebar ✦ button: idle -> open the "how many agents" dialog; running ->
   // confirm, then stop that website's agents.
   const onAgentsClick = (website) => {
@@ -587,6 +617,7 @@ export default function App() {
           >Claude</button>
           <button className="btn ghost" onClick={() => setRulesOpen(true)}>Rules</button>
           <button className="btn ghost" onClick={openHistory}>History</button>
+          <button className="btn ghost" onClick={openBackups} title="Restore / undo a delete, overwrite or edit from its backup">Backups</button>
           <button className="btn ghost" onClick={() => loadSummary(true)}>Refresh CSVs</button>
         </div>
 
@@ -748,6 +779,12 @@ export default function App() {
         <SameShaModal sha={shaPropose.sha} files={shaPropose.files} action={shaPropose.action} onConfirm={doProposedAction} onClose={() => setShaPropose(null)} />
       )}
       {history && <HistoryModal records={history} onClose={() => setHistory(null)} />}
+      {backups !== null && (
+        <BackupsModal
+          backups={backups} busy={backupBusy} canEdit={canEdit}
+          onRestore={doRestore} onClose={() => setBackups(null)}
+        />
+      )}
       {rulesOpen && (
         <RulesModal
           operator={operator} canEdit={canEdit} reloadKey={rulesReload}
@@ -1052,6 +1089,60 @@ function SameShaModal({ sha, files, action, onConfirm, onClose }) {
         <div className="modal-foot">
           <button className="btn ghost" onClick={onClose}>Not now</button>
           <button className={`btn ${cfg.cls}`} onClick={onConfirm}>{cfg.btn}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Restore / undo: lists the backup snapshots written by delete/overwrite/edit
+// (and prior restores) and reverts one to its "before" state. Purpose-built and
+// actionable — the History modal stays a read-only forensic trail.
+function BackupsModal({ backups, busy, canEdit, onRestore, onClose }) {
+  const [q, setQ] = useState('');
+  const needle = q.trim().toLowerCase();
+  const rows = needle
+    ? backups.filter((b) => `${b.absolute_path || ''} ${b.operation || ''} ${b.actor || ''}`.toLowerCase().includes(needle))
+    : backups;
+  return (
+    <div className="modal-backdrop" onClick={() => { if (!busy) onClose(); }}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>Restore from backup — /evidence/backups</h3>
+          <input className="bk-search" placeholder="filter by path / op / actor" value={q} onChange={(e) => setQ(e.target.value)} spellCheck={false} />
+          <button className="btn ghost" disabled={!!busy} onClick={onClose}>Close</button>
+        </div>
+        <div className="modal-body">
+          {backups.length === 0 && (
+            <div className="empty">No backups yet. Delete, overwrite and edit operations each write a restorable snapshot here.</div>
+          )}
+          {backups.length > 0 && rows.length === 0 && <div className="empty">No backups match “{q}”.</div>}
+          {rows.map((b) => {
+            const del = b.undo === 'delete-file';
+            const restoring = busy === b.name;
+            return (
+              <div className="bkrow" key={b.name}>
+                <span className={`badge op-${b.operation}`}>{b.operation}</span>
+                <span className="log-time">{b.timestamp || '—'}</span>
+                <span className="log-actor" title={b.actor}>{b.actor || '—'}</span>
+                <span className="log-path" title={b.absolute_path}>{b.absolute_path}</span>
+                <span
+                  className={`undo-pill ${del ? 'del' : 'keep'}`}
+                  title={del ? 'This operation created the file — restoring removes it' : "Restores the file's previous content"}
+                >{del ? '→ delete file' : '→ restore content'}</span>
+                <button
+                  className={`btn tiny ${del ? 'danger' : 'warn'}`}
+                  disabled={!!busy || !canEdit}
+                  title={!canEdit ? 'Set an operator name first' : `Undo this ${b.operation}`}
+                  onClick={() => onRestore(b)}
+                >{restoring ? '…' : (del ? 'Remove' : 'Restore')}</button>
+              </div>
+            );
+          })}
+        </div>
+        <div className="modal-foot">
+          <span className="muted small">Restoring reverts an operation to its “before” state and is itself logged &amp; backed up (so a restore can be undone too).</span>
+          <span className="muted small">{backups.length} snapshot{backups.length === 1 ? '' : 's'}</span>
         </div>
       </div>
     </div>

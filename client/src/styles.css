@@ -250,6 +250,23 @@ button, input { font-family: inherit; }
 }
 .log-time, .log-sha { color: var(--muted); font-family: ui-monospace, monospace; }
 .log-path { font-family: ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-actor { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- backups / restore modal ---------- */
+.badge.op-restore { background: var(--accent); }
+.bk-search {
+  margin-left: auto; width: 220px; padding: 5px 9px; border-radius: 6px;
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text); font-size: 12px;
+}
+.bk-search:focus { outline: none; border-color: var(--accent); }
+.bkrow {
+  display: grid; grid-template-columns: 90px 190px 110px 1fr auto auto; gap: 10px; align-items: center;
+  padding: 6px 16px; border-bottom: 1px solid var(--border); font-size: 12px;
+}
+.bkrow:hover { background: var(--panel-2); }
+.undo-pill { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
+.undo-pill.keep { border-color: var(--modified); color: var(--modified); }
+.undo-pill.del { border-color: var(--deleted); color: var(--deleted); }
 
 /* ---------- rules modal ---------- */
 .rules-summary { padding: 10px 16px; }

@@ -189,6 +189,19 @@ app.post('/api/fixed', async (req, res) => {
   } catch (e) { fail(res, 400, e); }
 });
 
+// Undo a prior delete/overwrite/edit by restoring its backup snapshot. Accepts
+// a backup id (bare folder name or the backup_folder path from the trail). The
+// restore is logged + backed up as its own reversible 'restore' record.
+app.post('/api/restore', async (req, res) => {
+  try {
+    const backup = req.body && (req.body.backup || req.body.name || req.body.backup_folder);
+    if (!backup) return fail(res, 400, 'backup id required');
+    const actor = requireOperator(req);
+    const r = await actions.restoreFromBackup(backup, actor, { note: req.body.note, clientId: originOf(req) });
+    res.json({ ok: true, ...r });
+  } catch (e) { fail(res, e.status || 400, e); }
+});
+
 // Available pristine Joomla versions (subfolders of JOOMLA_ROOT).
 app.get('/api/joomla/versions', async (req, res) => {
   try { res.json({ versions: await joomla.listVersions() }); }
@@ -274,6 +287,12 @@ async function writePatchDetail(record, detail) {
 
 app.get('/api/audit', async (req, res) => {
   try { res.json({ records: await audit.tail(Number(req.query.limit) || 200) }); }
+  catch (e) { fail(res, 500, e); }
+});
+
+// Restorable backup snapshots (newest first) — drives the restore/undo UI.
+app.get('/api/backups', async (req, res) => {
+  try { res.json({ backups: await audit.listBackups(Number(req.query.limit) || 500) }); }
   catch (e) { fail(res, 500, e); }
 });
 
