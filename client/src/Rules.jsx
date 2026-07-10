@@ -97,6 +97,14 @@ function CondRow({ c, canRemove, onChange, onRemove }) {
 }
 
 // ---- rule editor (create / edit) -----------------------------------------
+// One-line rule-of-thumb for the chosen kind (risk flips on the weight sign).
+function kindHint(kind, weight) {
+  if (kind === 'hardHit') return { k: 'hardHit', t: '“this IS harmful — always flag it.” Forces the score to at least the floor; overrides everything, even benign rules.' };
+  if (kind === 'hardBenign') return { k: 'hardBenign', t: '“this IS legit — stop suspecting it.” Caps the score at the ceiling (a hard allow-list).' };
+  if (Number(weight) < 0) return { k: 'negative risk', t: '“this looks legit — lower my suspicion.” A soft discount, weighed against the harmful signals.' };
+  return { k: 'positive risk', t: '“this looks suspicious — raise my suspicion.” A soft signal, combined with the others.' };
+}
+
 function RuleEditor({ rule, canEdit, busy, onSave, onCancel }) {
   const isBuiltin = rule && rule.source === 'builtin';
   const [name, setName] = useState(rule?.name || '');
@@ -130,6 +138,7 @@ function RuleEditor({ rule, canEdit, busy, onSave, onCancel }) {
     onSave(out);
   };
 
+  const hint = kindHint(kind, weight);
   return (
     <div className="rule-editor">
       {isBuiltin && <div className="banner-note">Editing a built-in creates an <b>override</b> (same id). Reset it later from the list.</div>}
@@ -165,7 +174,7 @@ function RuleEditor({ rule, canEdit, busy, onSave, onCancel }) {
       <button className="btn ghost tiny" onClick={addCond}>+ condition</button>
 
       {err && <div className="banner err">{err}</div>}
-      {kind === 'risk' && <div className="muted small">Tip: positive weight = harmful (0–1), negative = benign (pulls the score down).</div>}
+      <div className="kind-hint"><span className="rot-label">Rule of thumb</span><b>{hint.k}</b> — {hint.t}</div>
 
       <div className="editor-foot">
         <button className="btn ghost" onClick={onCancel} disabled={busy}>Cancel</button>
