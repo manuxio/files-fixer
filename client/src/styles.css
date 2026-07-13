@@ -97,6 +97,7 @@ button, input { font-family: inherit; }
 .file.fixed .fname { text-decoration: line-through; color: var(--muted); }
 .file.checked { background: #1d2b1f; }
 .file-check { margin: 0; cursor: pointer; accent-color: var(--accent); flex: 0 0 auto; }
+.site-check { margin: 0 2px 0 0; cursor: pointer; accent-color: var(--accent); flex: 0 0 auto; }
 .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .tick { color: var(--added); }
 .viewer-badge { font-size: 11px; filter: grayscale(1) opacity(0.85); }

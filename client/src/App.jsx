@@ -471,6 +471,27 @@ export default function App() {
       return { ...prev, [file.absolute_path]: file };
     });
   }, []);
+  // Select/deselect every file currently VISIBLE under a folder. `files` is what
+  // the sidebar actually renders — already narrowed by the status filter and by
+  // how many pages are loaded — so filtered-out files are never swept in.
+  const selectAllSite = useCallback((website, files, select) => {
+    setMultiSel((prev) => {
+      if (!select) { // deselect exactly these
+        const n = { ...prev };
+        for (const f of files) delete n[f.absolute_path];
+        return n;
+      }
+      const first = Object.values(prev)[0];
+      const next = (first && first.website !== website) ? {} : { ...prev }; // bulk ops are one-website
+      for (const f of files) next[f.absolute_path] = f;
+      return next;
+    });
+  }, []);
+
+  // Changing a filter changes WHICH files are visible, so a stale selection could
+  // silently carry now-hidden files into a bulk action — drop it.
+  useEffect(() => { setMultiSel({}); }, [statusFilter, query]);
+
   const clearMulti = () => setMultiSel({});
   const multiFiles = Object.values(multiSel);
   const multiWebsite = multiFiles.length ? multiFiles[0].website : null;
@@ -617,7 +638,7 @@ export default function App() {
         onAgents={agentsEnabled ? onAgentsClick : null}
         onPatch={jceAvailable ? openPatch : null}
         onRefreshSite={refreshSiteCounts}
-        multiSel={multiSel} onToggleMulti={toggleMulti}
+        multiSel={multiSel} onToggleMulti={toggleMulti} onSelectAllSite={selectAllSite}
       />
 
       <div className="resizer" onMouseDown={startResize} title="Drag to resize the sidebar" />

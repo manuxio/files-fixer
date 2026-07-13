@@ -49,7 +49,7 @@ function PatchedLabel({ p }) {
   return <span className={`patched-label ${cls}`} title={`patched: JCE ${p.status}${p.jce ? ' ' + p.jce : ''}${p.at ? ' @ ' + p.at : ''}`}>&lt;P&gt;</span>;
 }
 
-export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilter, selected, onSelect, isFixed, reloadToken, viewersByPath = {}, patchedMap = {}, agentRuns = {}, onAgents = null, onPatch = null, onRefreshSite = null, multiSel = {}, onToggleMulti = null }) {
+export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilter, selected, onSelect, isFixed, reloadToken, viewersByPath = {}, patchedMap = {}, agentRuns = {}, onAgents = null, onPatch = null, onRefreshSite = null, multiSel = {}, onToggleMulti = null, onSelectAllSite = null }) {
   const [expanded, setExpanded] = useState({});
   const [browse, setBrowse] = useState({});   // name -> { files, total, offset, loading }
   const [search, setSearch] = useState(null); // { files, total, offset, loading }
@@ -206,10 +206,29 @@ export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilte
           const isOpen = !!expanded[w.name];
           const page = browse[w.name];
           const run = agentRuns[w.name];
+          // Master checkbox reflects ONLY the rows actually rendered for this
+          // folder (status-filtered, loaded pages) — never the hidden ones.
+          const shown = (page && page.files) || [];
+          const selCount = shown.filter((f) => multiSel[f.absolute_path]).length;
+          const allSel = shown.length > 0 && selCount === shown.length;
+          const someSel = selCount > 0 && !allSel;
+          const more = shown.length < ((page && page.total) || 0);
           return (
             <div className="site" key={w.name}>
               <div className="site-head" onClick={() => toggleSite(w.name)}>
                 <span className="caret">{isOpen ? '▾' : '▸'}</span>
+                {onSelectAllSite && isOpen && shown.length > 0 && (
+                  <input
+                    type="checkbox" className="site-check"
+                    checked={allSel}
+                    ref={(el) => { if (el) el.indeterminate = someSel; }}
+                    title={allSel
+                      ? `Deselect these ${shown.length} file(s)`
+                      : `Select the ${shown.length} file(s) shown here${more ? ` — the other ${page.total - shown.length} aren’t loaded yet and won’t be selected` : ''}`}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={() => onSelectAllSite(w.name, shown, !allSel)}
+                  />
+                )}
                 <span className="site-name" title={w.name}>{w.name}</span>
                 <PatchedLabel p={patchedMap[w.name]} />
                 {onRefreshSite && (
