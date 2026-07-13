@@ -212,6 +212,8 @@ async function agentLoop(run, agent) {
         } else {
           run.stats.errors += 1;
           agent.consecErrors = (agent.consecErrors || 0) + 1;
+          const msg = (e.message || String(e)).slice(0, 300);
+          if (run.errorLog.length < 20) run.errorLog.push({ path: f.absolute_path, agent: agent.name, message: msg });
           console.error(`[agents] ${agent.name} failed on ${f.absolute_path}: ${e.message}`);
         }
       } finally {
@@ -249,7 +251,7 @@ function finishRun(run) {
   console.log(`[agents] ${run.website}: ${summary}`);
   audit.event({ operation: 'agents-stop', absPath: auditPath(run.website), actor: run.by, note: summary })
     .catch((e) => console.error('[agents] audit failed:', e.message));
-  events.broadcast('agents', { op: 'stopped', website: run.website, reason, kind, stats: s, by: run.by });
+  events.broadcast('agents', { op: 'stopped', website: run.website, reason, kind, stats: s, errorLog: run.errorLog, by: run.by });
 }
 
 // --- lifecycle ---------------------------------------------------------------
@@ -278,6 +280,7 @@ async function start(website, count, operator) {
     stopping: false,
     stopReason: null,
     stopKind: null, // completed | stopped | limit | error (set when the run ends)
+    errorLog: [],   // { path, agent, message } per failed file (capped at 20) — surfaced in the finish popup
     agents: new Map(),
     done: new Set(), // paths this run already handled (incl. uncertain/errors) — never re-claimed
     stats: { processed: 0, safeFixed: 0, kept: 0, reverted: 0, deleted: 0, uncertain: 0, skipped: 0, errors: 0 },

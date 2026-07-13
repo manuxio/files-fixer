@@ -190,7 +190,7 @@ export default function App() {
       if (d.op === 'stopped') {
         // A pool finished for ANY reason (completed / stopped / limit / error):
         // queue a popup so it's never silent. scheduleSummaryRefresh reconciles counts.
-        setAgentDone((q) => [...q, { website: d.website, reason: d.reason, kind: d.kind, stats: d.stats || {}, by: d.by }]);
+        setAgentDone((q) => [...q, { website: d.website, reason: d.reason, kind: d.kind, stats: d.stats || {}, errorLog: d.errorLog || [], by: d.by }]);
         scheduleSummaryRefresh();
       }
     });
@@ -1064,8 +1064,20 @@ function AgentsDoneModal({ notice, remaining, onClose }) {
           {notice.kind === 'limit' && (
             <div className="muted small">Agents share the logged-in Claude accounts. Log in more profiles (open the Claude shell → <code>/login</code> on #2/#3) or run fewer agents so they don't exhaust one account's rate limit.</div>
           )}
-          {notice.kind === 'error' && s.errors > 0 && (
-            <div className="muted small">Check the server log (<code>docker compose logs -f</code>) for the failing files.</div>
+          {notice.errorLog && notice.errorLog.length > 0 && (
+            <div className="agent-errors">
+              <div className="agent-errors-head">
+                {s.errors} error{s.errors === 1 ? '' : 's'}
+                {notice.errorLog.length < s.errors ? ` · showing first ${notice.errorLog.length}` : ''}
+              </div>
+              {notice.errorLog.map((er, i) => (
+                <div className="agent-error-row" key={i} title={er.path}>
+                  <span className="ae-file">{er.agent} · {base(er.path)}</span>
+                  <span className="ae-msg">{er.message}</span>
+                </div>
+              ))}
+              <div className="muted small">Full server log: <code>docker compose logs -f</code></div>
+            </div>
           )}
         </div>
         <div className="modal-foot">
