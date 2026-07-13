@@ -62,9 +62,6 @@ export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilte
     return () => clearTimeout(t);
   }, [query]);
 
-  // invalidate loaded pages when the status filter, sort, or dataset changes
-  useEffect(() => { setBrowse({}); }, [statusFilter, sort, reloadToken]);
-
   // search across all websites (paged), grouped by website in render
   useEffect(() => {
     if (!dq) { setSearch(null); return undefined; }
@@ -85,6 +82,19 @@ export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilte
       return { ...prev, [name]: { files: [], total: 0, offset: 0, loading: true } };
     });
   };
+
+  // Drop loaded pages when the status filter, sort, or dataset changes — they
+  // hold rows for the OLD filter — then immediately reload every folder that is
+  // still expanded. Without that reload an open folder sits empty (no rows, no
+  // select-all) until you collapse and re-expand it.
+  useEffect(() => {
+    const open = Object.keys(expanded).filter((n) => expanded[n]);
+    setBrowse({});
+    for (const name of open) ensureBrowse(name);
+    // `expanded`/`ensureBrowse` are deliberately not deps: this must fire on a
+    // filter/sort/dataset change only, never on every expand/collapse.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, sort, reloadToken]);
 
   const toggleSite = (name) => {
     const willExpand = !expanded[name];
@@ -184,14 +194,36 @@ export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilte
                 ? 'searching…'
                 : `${search ? search.total : 0} match${search && search.total === 1 ? '' : 'es'} for "${dq}"`}
             </div>
-            {searchGroups.map((g) => (
-              <div className="site" key={g.name}>
-                <div className="site-head static"><span className="site-name" title={g.name}>{g.name}</span><PatchedLabel p={patchedMap[g.name]} /></div>
-                <div className="files">
-                  {g.files.map((f) => <FileRow key={f.absolute_path} f={f} selected={selected} onSelect={onSelect} isFixed={isFixed} viewers={viewersByPath[f.absolute_path]} checked={!!multiSel[f.absolute_path]} onToggle={onToggleMulti} />)}
+            {searchGroups.map((g) => {
+              // Select-all works in search mode too, scoped to this website's
+              // VISIBLE matches — never the files the query filtered out.
+              const gSel = g.files.filter((f) => multiSel[f.absolute_path]).length;
+              const gAll = g.files.length > 0 && gSel === g.files.length;
+              const gSome = gSel > 0 && !gAll;
+              const moreSearch = !!(search && search.files.length < search.total);
+              return (
+                <div className="site" key={g.name}>
+                  <div className="site-head static">
+                    {onSelectAllSite && (
+                      <input
+                        type="checkbox" className="site-check"
+                        checked={gAll}
+                        ref={(el) => { if (el) el.indeterminate = gSome; }}
+                        title={gAll
+                          ? `Deselect these ${g.files.length} match(es)`
+                          : `Select the ${g.files.length} match(es) shown for ${g.name}${moreSearch ? ' — unloaded matches are not included' : ''}`}
+                        onChange={() => onSelectAllSite(g.name, g.files, !gAll)}
+                      />
+                    )}
+                    <span className="site-name" title={g.name}>{g.name}</span>
+                    <PatchedLabel p={patchedMap[g.name]} />
+                  </div>
+                  <div className="files">
+                    {g.files.map((f) => <FileRow key={f.absolute_path} f={f} selected={selected} onSelect={onSelect} isFixed={isFixed} viewers={viewersByPath[f.absolute_path]} checked={!!multiSel[f.absolute_path]} onToggle={onToggleMulti} />)}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {search && search.files.length < search.total && (
               <button className="load-more" disabled={search.loading} onClick={loadMoreSearch}>
                 {search.loading ? 'loading…' : `Load more (${search.total - search.files.length} left)`}
@@ -217,14 +249,17 @@ export function Sidebar({ summary, query, setQuery, statusFilter, setStatusFilte
             <div className="site" key={w.name}>
               <div className="site-head" onClick={() => toggleSite(w.name)}>
                 <span className="caret">{isOpen ? '▾' : '▸'}</span>
-                {onSelectAllSite && isOpen && shown.length > 0 && (
+                {onSelectAllSite && isOpen && (
                   <input
                     type="checkbox" className="site-check"
                     checked={allSel}
+                    disabled={shown.length === 0}
                     ref={(el) => { if (el) el.indeterminate = someSel; }}
-                    title={allSel
-                      ? `Deselect these ${shown.length} file(s)`
-                      : `Select the ${shown.length} file(s) shown here${more ? ` — the other ${page.total - shown.length} aren’t loaded yet and won’t be selected` : ''}`}
+                    title={shown.length === 0
+                      ? 'Loading this folder’s files…'
+                      : allSel
+                        ? `Deselect these ${shown.length} file(s)`
+                        : `Select the ${shown.length} file(s) shown here${more ? ` — the other ${page.total - shown.length} aren’t loaded yet and won’t be selected` : ''}`}
                     onClick={(e) => e.stopPropagation()}
                     onChange={() => onSelectAllSite(w.name, shown, !allSel)}
                   />
